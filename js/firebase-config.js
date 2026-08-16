@@ -1,13 +1,13 @@
 // ⚠️ Remplacer par la config de la NOUVELLE base Firebase créée pour Il Sangue Rosso
 // (Firebase Console → Paramètres du projet → Vos applications → Config)
 const FIREBASE_CONFIG = {
-  apiKey: "REMPLACER_API_KEY",
-  authDomain: "REMPLACER.firebaseapp.com",
-  databaseURL: "https://REMPLACER-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "REMPLACER",
-  storageBucket: "REMPLACER.appspot.com",
-  messagingSenderId: "REMPLACER",
-  appId: "REMPLACER"
+  apiKey: "AIzaSyB0VkhwfAshsXciEP2T5l64nqsbVGb8k8o",
+  authDomain: "il-sangue-rosso.firebaseapp.com",
+  databaseURL: "https://il-sangue-rosso-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "il-sangue-rosso",
+  storageBucket: "il-sangue-rosso.firebasestorage.app",
+  messagingSenderId: "348270636377",
+  appId: "1:348270636377:web:779cbe207f6aee4d7d3048"
 };
 
 firebase.initializeApp(FIREBASE_CONFIG);
