@@ -14,7 +14,10 @@
       <img src="img/logo.png" class="logo" alt="Il Sangue Rosso">
       <h1>IL SANGUE ROSSO</h1>
       <div class="devise">FAMIGLIA · ONORE · LEALTÀ</div>
-      <input type="text" id="identifiant" placeholder="Identifiant">
+      <label style="text-align:left; margin-bottom:5px;">Membre</label>
+      <select id="membreSelect">
+        <option value="">— Sélectionner —</option>
+      </select>
       <input type="password" id="motdepasse" placeholder="Mot de passe">
       <button onclick="seConnecter()">Se connecter</button>
       <div class="login-error" id="loginError"></div>
@@ -23,33 +26,41 @@
 
   <script src="js/firebase-config.js"></script>
   <script>
+    let MEMBRES_CACHE = {};
+
     // Redirige direct si déjà connecté
     (function(){
       const s = getSession();
       if (s && s.id) window.location.href = "pages/dashboard.html";
     })();
 
+    // Charge la liste des membres (triés par prénom) dans le menu déroulant
+    (async function chargerMembres(){
+      const snap = await db.ref("membres").once("value");
+      MEMBRES_CACHE = snap.val() || {};
+      const sel = document.getElementById("membreSelect");
+      Object.entries(MEMBRES_CACHE)
+        .sort((a,b) => (a[1].prenom||"").localeCompare(b[1].prenom||""))
+        .forEach(([id, m]) => {
+          const opt = document.createElement("option");
+          opt.value = id;
+          opt.textContent = m.prenom;
+          sel.appendChild(opt);
+        });
+    })();
+
     async function seConnecter() {
-      const idf = document.getElementById("identifiant").value.trim();
+      const membreId = document.getElementById("membreSelect").value;
       const mdp = document.getElementById("motdepasse").value;
       const err = document.getElementById("loginError");
       err.textContent = "";
-      if (!idf || !mdp) { err.textContent = "Identifiant et mot de passe requis."; return; }
+      if (!membreId || !mdp) { err.textContent = "Sélectionne ton nom et entre ton mot de passe."; return; }
 
-      try {
-        const snap = await db.ref("membres").once("value");
-        const membres = snap.val() || {};
-        let trouve = null, trouveId = null;
-        for (const [id, m] of Object.entries(membres)) {
-          if (m.identifiant === idf && m.motdepasse === mdp) { trouve = m; trouveId = id; break; }
-        }
-        if (!trouve) { err.textContent = "Identifiant ou mot de passe incorrect."; return; }
-        setSession({ id: trouveId, ...trouve });
-        window.location.href = "pages/dashboard.html";
-      } catch (e) {
-        err.textContent = "Erreur de connexion à la base.";
-        console.error(e);
-      }
+      const m = MEMBRES_CACHE[membreId];
+      if (!m || m.motdepasse !== mdp) { err.textContent = "Mot de passe incorrect."; return; }
+
+      setSession({ id: membreId, ...m });
+      window.location.href = "pages/dashboard.html";
     }
 
     document.getElementById("motdepasse").addEventListener("keydown", e => {
