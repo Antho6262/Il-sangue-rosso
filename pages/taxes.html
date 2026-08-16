@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Taxes — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { taxes:{}, config:{} };
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("taxes", MEMBRE);
+  render();
+  db.ref("taxes").on("value", s => { RAW.taxes = s.val() || {}; render(); });
+  db.ref("config").on("value", s => { RAW.config = s.val() || {}; render(); });
+})();
+
+function render(){
+  const content = document.getElementById("page-content");
+  const list = Object.entries(RAW.taxes||{}).sort((a,b) => (b[1].date||"").localeCompare(a[1].date||""));
+  const total = list.reduce((a,[id,t]) => a + (t.montant||0), 0);
+
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Taxes</h1><div class="sub">Prélèvements du groupe</div></div></div>
+
+    <div class="cards-row">
+      <div class="card"><div class="label">Total prélevé</div><div class="value">${total.toLocaleString()} $</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Nouvelle taxe</h2>
+      <div class="form-row">
+        <div><label>Montant</label><input type="number" id="txMontant"></div>
+        <div><label>Motif</label><input type="text" id="txMotif"></div>
+      </div>
+      <button class="btn-or" onclick="ajouterTaxe()">Enregistrer</button>
+    </div>
+
+    <div class="panel">
+      <h2>Historique</h2>
+      ${list.length ? `
+      <table>
+        <thead><tr><th>Date</th><th>Motif</th><th>Montant</th><th></th></tr></thead>
+        <tbody>
+          ${list.map(([id,t]) => `
+            <tr>
+              <td>${t.date ? new Date(t.date).toLocaleString('fr-FR') : ""}</td>
+              <td>${t.motif||""}</td>
+              <td>${(t.montant||0).toLocaleString()} $</td>
+              <td><button class="btn-ghost btn-sm" onclick="supprimerTaxe('${id}')">🗑</button></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Aucune taxe enregistrée.</div>`}
+    </div>
+  `;
+}
+
+function ajouterTaxe(){
+  const montant = parseFloat(document.getElementById("txMontant").value) || 0;
+  const motif = document.getElementById("txMotif").value.trim();
+  if (!montant) return;
+  db.ref("taxes").push({ montant, motif, date: new Date().toISOString(), membreId: MEMBRE.id });
+  db.ref("argent/sale").transaction(v => (v||0)+montant);
+  document.getElementById("txMontant").value = "";
+  document.getElementById("txMotif").value = "";
+}
+
+function supprimerTaxe(id){
+  if (!confirm("Supprimer cette taxe ?")) return;
+  db.ref(`taxes/${id}`).remove();
+}
+</script>
+</body>
+</html>

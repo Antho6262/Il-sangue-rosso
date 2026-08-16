@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Profil — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("profil", MEMBRE);
+  render();
+})();
+
+function render(){
+  const content = document.getElementById("page-content");
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Profil</h1><div class="sub">${MEMBRE.prenom}</div></div></div>
+
+    <div class="panel">
+      <h2>Informations</h2>
+      <div class="form-row">
+        <div><label>Prénom</label><input type="text" value="${MEMBRE.prenom||""}" disabled></div>
+        <div><label>Grade</label><input type="text" value="${MEMBRE.grade||""}" disabled></div>
+        <div><label>Identifiant</label><input type="text" value="${MEMBRE.identifiant||""}" disabled></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Changer le mot de passe</h2>
+      <div class="form-row">
+        <div><label>Nouveau mot de passe</label><input type="password" id="pfMdp1"></div>
+        <div><label>Confirmer</label><input type="password" id="pfMdp2"></div>
+      </div>
+      <button class="btn-or" onclick="changerMdp()">Valider</button>
+      <div class="sub" id="pfMsg" style="margin-top:10px;"></div>
+    </div>
+  `;
+}
+
+function changerMdp(){
+  const m1 = document.getElementById("pfMdp1").value;
+  const m2 = document.getElementById("pfMdp2").value;
+  const msg = document.getElementById("pfMsg");
+  if (!m1 || m1.length < 4) { msg.textContent = "Mot de passe trop court (min. 4 caractères)."; return; }
+  if (m1 !== m2) { msg.textContent = "Les mots de passe ne correspondent pas."; return; }
+
+  db.ref(`membres/${MEMBRE.id}/motdepasse`).set(m1).then(() => {
+    MEMBRE.motdepasse = m1;
+    setSession(MEMBRE);
+    msg.textContent = "Mot de passe mis à jour.";
+    document.getElementById("pfMdp1").value = "";
+    document.getElementById("pfMdp2").value = "";
+  });
+}
+</script>
+</body>
+</html>

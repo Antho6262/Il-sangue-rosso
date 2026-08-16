@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blanchiment — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { argent:{sale:0,propre:0}, config:{blanchiment_taux:0.7}, blanchiment:{} };
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("blanchiment", MEMBRE);
+  render();
+  db.ref("argent").on("value", s => { RAW.argent = s.val() || {sale:0,propre:0}; render(); });
+  db.ref("config").on("value", s => { RAW.config = s.val() || {}; render(); });
+  db.ref("blanchiment").on("value", s => { RAW.blanchiment = s.val() || {}; render(); });
+})();
+
+function render(){
+  const content = document.getElementById("page-content");
+  const taux = RAW.config.blanchiment_taux ?? 0.7;
+  const list = Object.entries(RAW.blanchiment||{}).sort((a,b) => (b[1].date||"").localeCompare(a[1].date||""));
+
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Blanchiment</h1><div class="sub">Taux actuel : ${Math.round(taux*100)}%</div></div></div>
+
+    <div class="cards-row">
+      <div class="card"><div class="label">Argent sale</div><div class="value danger">${(RAW.argent.sale||0).toLocaleString()} $</div></div>
+      <div class="card"><div class="label">Argent propre</div><div class="value succes">${(RAW.argent.propre||0).toLocaleString()} $</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Nouveau blanchiment</h2>
+      <div class="form-row">
+        <div><label>Montant sale à blanchir</label><input type="number" id="blMontant"></div>
+      </div>
+      <div class="sub" id="blApercu" style="margin-bottom:12px;"></div>
+      <button class="btn-or" onclick="blanchir()">Blanchir</button>
+    </div>
+
+    <div class="panel">
+      <h2>Historique</h2>
+      ${list.length ? `
+      <table>
+        <thead><tr><th>Date</th><th>Sale investi</th><th>Propre reçu</th></tr></thead>
+        <tbody>
+          ${list.map(([id,b]) => `
+            <tr><td>${b.date ? new Date(b.date).toLocaleString('fr-FR') : ""}</td><td>${(b.sale||0).toLocaleString()} $</td><td>${(b.propre||0).toLocaleString()} $</td></tr>
+          `).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Aucun blanchiment.</div>`}
+    </div>
+  `;
+
+  document.getElementById("blMontant").addEventListener("input", majApercu);
+}
+
+function majApercu(){
+  const taux = RAW.config.blanchiment_taux ?? 0.7;
+  const montant = parseFloat(document.getElementById("blMontant").value) || 0;
+  document.getElementById("blApercu").textContent = `= ${(montant*taux).toLocaleString()} $ propre`;
+}
+
+function blanchir(){
+  const taux = RAW.config.blanchiment_taux ?? 0.7;
+  const montant = parseFloat(document.getElementById("blMontant").value) || 0;
+  if (!montant || montant > (RAW.argent.sale||0)) { alert("Montant invalide ou insuffisant."); return; }
+  const propre = montant * taux;
+
+  db.ref("argent/sale").transaction(v => (v||0)-montant);
+  db.ref("argent/propre").transaction(v => (v||0)+propre);
+  db.ref("blanchiment").push({ sale: montant, propre, date: new Date().toISOString(), membreId: MEMBRE.id });
+
+  document.getElementById("blMontant").value = "";
+}
+</script>
+</body>
+</html>

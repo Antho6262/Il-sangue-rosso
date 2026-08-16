@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tracker — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { membres:{}, actions_dispo:{}, actions:{} };
+
+function semaineIdCourante(){
+  const d = new Date();
+  const onejan = new Date(d.getFullYear(),0,1);
+  const week = Math.ceil((((d - onejan) / 86400000) + onejan.getDay()+1)/7);
+  return `${d.getFullYear()}-S${week}`;
+}
+const SEMAINE_ID = semaineIdCourante();
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("tracker", MEMBRE);
+  render();
+  db.ref("membres").on("value", s => { RAW.membres = s.val() || {}; render(); });
+  db.ref("actions_dispo").on("value", s => { RAW.actions_dispo = s.val() || {}; render(); });
+  db.ref(`actions/${SEMAINE_ID}`).on("value", s => { RAW.actions = s.val() || {}; render(); });
+})();
+
+function actionsDisponibles(){
+  // Labo volontairement exclue du tracker : la production passe par la page dédiée
+  return Object.entries(RAW.actions_dispo||{}).filter(([id,a]) => a.nom !== "Labo");
+}
+
+function needsEquipe(nomAction){
+  return nomAction === "Fleeca" || nomAction === "Armurerie";
+}
+
+function render(){
+  const content = document.getElementById("page-content");
+  const actionsDispo = actionsDisponibles();
+  const list = Object.entries(RAW.actions||{}).sort((a,b) => (b[1].date||"").localeCompare(a[1].date||""));
+
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Tracker</h1><div class="sub">Semaine ${SEMAINE_ID}</div></div></div>
+
+    <div class="panel">
+      <h2>Nouvelle action</h2>
+      <div class="form-row">
+        <div><label>Action</label>
+          <select id="trkAction" onchange="onActionChange()">
+            ${actionsDispo.map(([id,a]) => `<option value="${id}" data-nom="${a.nom}">${a.nom}</option>`).join("")}
+          </select>
+        </div>
+        <div><label>Notes</label><input type="text" id="trkNotes"></div>
+      </div>
+      <div id="equipeWrap" style="display:none; margin-bottom:12px;">
+        <label>Coéquipiers présents</label>
+        <div style="display:flex; flex-wrap:wrap; gap:10px;">
+          ${Object.entries(RAW.membres||{}).map(([id,m]) => `
+            <label style="display:flex; align-items:center; gap:6px; width:auto; margin-bottom:0;">
+              <input type="checkbox" value="${id}" class="equipeCheck" style="width:auto; margin-bottom:0;"> ${m.prenom}
+            </label>`).join("")}
+        </div>
+      </div>
+      <button class="btn-or" onclick="ajouterAction()">Valider</button>
+    </div>
+
+    <div class="panel">
+      <h2>Historique</h2>
+      ${list.length ? `
+      <table>
+        <thead><tr><th>Date</th><th>Membre</th><th>Action</th><th>Équipe</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+          ${list.map(([id,a]) => `
+            <tr>
+              <td>${a.date ? new Date(a.date).toLocaleString('fr-FR') : ""}</td>
+              <td>${(RAW.membres[a.membreId]||{}).prenom || "?"}</td>
+              <td><span class="badge badge-or">${a.actionNom}</span></td>
+              <td>${(a.participants_noms||[]).join(", ") || "-"}</td>
+              <td>${a.notes||""}</td>
+              <td>${peutModifier(a) ? `<button class="btn-ghost btn-sm" onclick="supprimerAction('${id}')">🗑</button>` : ""}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Aucune action cette semaine.</div>`}
+    </div>
+  `;
+}
+
+function peutModifier(action){
+  return MEMBRE.role === "admin" || action.membreId === MEMBRE.id;
+}
+
+function onActionChange(){
+  const sel = document.getElementById("trkAction");
+  const nom = sel.options[sel.selectedIndex]?.dataset.nom;
+  document.getElementById("equipeWrap").style.display = needsEquipe(nom) ? "block" : "none";
+}
+
+function ajouterAction(){
+  const sel = document.getElementById("trkAction");
+  const actionId = sel.value;
+  const actionNom = sel.options[sel.selectedIndex]?.dataset.nom;
+  const notes = document.getElementById("trkNotes").value;
+
+  let participants_ids = [], participants_noms = [];
+  if (needsEquipe(actionNom)) {
+    document.querySelectorAll(".equipeCheck:checked").forEach(cb => {
+      participants_ids.push(cb.value);
+      participants_noms.push((RAW.membres[cb.value]||{}).prenom || "?");
+    });
+  }
+
+  db.ref(`actions/${SEMAINE_ID}`).push({
+    membreId: MEMBRE.id, actionId, actionNom, notes,
+    participants_ids, participants_noms,
+    date: new Date().toISOString()
+  });
+  document.getElementById("trkNotes").value = "";
+}
+
+function supprimerAction(id){
+  if (!confirm("Supprimer cette action ?")) return;
+  db.ref(`actions/${SEMAINE_ID}/${id}`).remove();
+}
+</script>
+</body>
+</html>

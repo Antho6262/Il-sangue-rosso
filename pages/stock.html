@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { stock:{}, argent:{sale:0,propre:0} };
+let activeTab = "argent";
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("stock", MEMBRE);
+  render();
+  db.ref("stock").on("value", s => { RAW.stock = s.val() || {}; render(); });
+  db.ref("argent").on("value", s => { RAW.argent = s.val() || {sale:0,propre:0}; render(); });
+})();
+
+function render(){
+  const content = document.getElementById("page-content");
+  const categories = Object.entries(RAW.stock || {});
+
+  content.innerHTML = `
+    <div class="page-header">
+      <div><h1>Stock</h1><div class="sub">Suivi des stocks par catégorie</div></div>
+    </div>
+    <div class="tabs">
+      <div class="tab ${activeTab==='argent'?'active':''}" onclick="selectTab('argent')">💰 Argent</div>
+      ${categories.map(([id,c]) => `<div class="tab ${activeTab===id?'active':''}" onclick="selectTab('${id}')">${c.emoji||""} ${c.nom}</div>`).join("")}
+    </div>
+    <div id="tabContent"></div>
+  `;
+  renderTab(categories);
+}
+
+function selectTab(id){ activeTab = id; render(); }
+
+function renderTab(categories){
+  const el = document.getElementById("tabContent");
+  if (activeTab === "argent") {
+    el.innerHTML = `
+      <div class="cards-row">
+        <div class="card"><div class="label">Argent sale</div><div class="value danger">${(RAW.argent.sale||0).toLocaleString()} $</div></div>
+        <div class="card"><div class="label">Argent propre</div><div class="value succes">${(RAW.argent.propre||0).toLocaleString()} $</div></div>
+      </div>
+      <div class="panel">
+        <h2>Mouvement rapide</h2>
+        <div class="form-row">
+          <div><label>Type</label><select id="mvType"><option value="sale">Argent sale</option><option value="propre">Argent propre</option></select></div>
+          <div><label>Montant</label><input type="number" id="mvMontant"></div>
+          <div><label>Sens</label><select id="mvSens"><option value="ajout">Ajout</option><option value="retrait">Retrait</option></select></div>
+        </div>
+        <button class="btn-or" onclick="mouvementArgent()">Valider</button>
+      </div>
+    `;
+    return;
+  }
+  const cat = RAW.stock[activeTab];
+  if (!cat) { el.innerHTML = `<div class="empty-state">Catégorie introuvable.</div>`; return; }
+  const produits = Object.entries(cat.produits || {});
+  el.innerHTML = `
+    <div class="panel">
+      <h2>${cat.emoji||""} ${cat.nom}</h2>
+      ${produits.length ? `
+      <table>
+        <thead><tr><th>Produit</th><th>Prix</th><th>Stock</th><th>Seuil</th><th>Niveau</th><th></th></tr></thead>
+        <tbody>
+          ${produits.map(([pid,p]) => {
+            const stock = p.stock||0, seuil = p.seuil||0;
+            const niveau = seuil ? Math.round((stock/seuil)*100) : 0;
+            const badge = stock <= seuil ? "badge-danger" : "badge-succes";
+            return `<tr>
+              <td>${p.nom}</td>
+              <td>${(p.prix||0).toLocaleString()} $</td>
+              <td>${stock}</td>
+              <td>${seuil}</td>
+              <td><span class="badge ${badge}">${niveau}%</span></td>
+              <td>
+                <button class="btn-ghost btn-sm" onclick="ajusterStock('${pid}',1)">+1</button>
+                <button class="btn-ghost btn-sm" onclick="ajusterStock('${pid}',-1)">-1</button>
+              </td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Aucun produit. Ajoute-en depuis Admin → Stock.</div>`}
+    </div>
+  `;
+}
+
+function mouvementArgent(){
+  const type = document.getElementById("mvType").value;
+  const montant = parseFloat(document.getElementById("mvMontant").value) || 0;
+  const sens = document.getElementById("mvSens").value;
+  if (!montant) return;
+  const delta = sens === "ajout" ? montant : -montant;
+  db.ref(`argent/${type}`).transaction(v => (v||0) + delta);
+  document.getElementById("mvMontant").value = "";
+}
+
+function ajusterStock(pid, delta){
+  db.ref(`stock/${activeTab}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)+delta));
+}
+</script>
+</body>
+</html>

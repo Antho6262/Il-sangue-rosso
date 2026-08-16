@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { membres:{}, stock:{}, transactions:{} };
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("dashboard", MEMBRE);
+  render();
+  db.ref("membres").on("value", s => { RAW.membres = s.val() || {}; render(); });
+  db.ref("stock").on("value", s => { RAW.stock = s.val() || {}; render(); });
+  db.ref("transactions").on("value", s => { RAW.transactions = s.val() || {}; render(); });
+})();
+
+function render(){
+  const content = document.getElementById("page-content");
+  const membresCount = Object.keys(RAW.membres).length;
+  const transactions = Object.values(RAW.transactions);
+  const soldeSale = transactions.reduce((acc,t) => acc + (t.type_argent === "sale" ? (t.montant||0) * (t.type==="vente"?1:-1) : 0), 0);
+  const soldePropre = transactions.reduce((acc,t) => acc + (t.type_argent === "propre" ? (t.montant||0) * (t.type==="vente"?1:-1) : 0), 0);
+
+  const categories = Object.entries(RAW.stock || {});
+
+  content.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h1>Dashboard</h1>
+        <div class="sub">Vue d'ensemble — Il Sangue Rosso</div>
+      </div>
+    </div>
+    <div class="cards-row">
+      <div class="card"><div class="label">Membres</div><div class="value">${membresCount}</div></div>
+      <div class="card"><div class="label">Solde argent sale</div><div class="value danger">${soldeSale.toLocaleString()} $</div></div>
+      <div class="card"><div class="label">Solde argent propre</div><div class="value succes">${soldePropre.toLocaleString()} $</div></div>
+      <div class="card"><div class="label">Transactions</div><div class="value">${transactions.length}</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Stock par catégorie</h2>
+      ${categories.length ? `
+        <div class="tabs" id="dashTabs"></div>
+        <div id="dashTabContent"></div>
+      ` : `<div class="empty-state">Aucune catégorie de stock configurée. Rends-toi dans Admin → Stock pour en créer.</div>`}
+    </div>
+  `;
+
+  if (categories.length) renderTabs(categories);
+}
+
+let activeCatId = null;
+function renderTabs(categories){
+  if (!activeCatId) activeCatId = categories[0][0];
+  const tabsEl = document.getElementById("dashTabs");
+  tabsEl.innerHTML = categories.map(([id,c]) => `
+    <div class="tab ${id===activeCatId?"active":""}" onclick="selectCat('${id}')">${c.emoji||""} ${c.nom}</div>
+  `).join("");
+  renderCatContent(categories);
+}
+
+function selectCat(id){ activeCatId = id; render(); }
+
+function renderCatContent(categories){
+  const cat = categories.find(([id]) => id === activeCatId);
+  const el = document.getElementById("dashTabContent");
+  if (!cat) { el.innerHTML = ""; return; }
+  const produits = Object.entries(cat[1].produits || {});
+  if (!produits.length) { el.innerHTML = `<div class="empty-state">Aucun produit dans cette catégorie.</div>`; return; }
+  el.innerHTML = `
+    <table>
+      <thead><tr><th>Produit</th><th>Prix</th><th>Stock</th><th>Seuil</th><th>Niveau</th></tr></thead>
+      <tbody>
+        ${produits.map(([pid,p]) => {
+          const stock = p.stock || 0, seuil = p.seuil || 0;
+          const niveau = seuil ? Math.round((stock/seuil)*100) : 0;
+          const badge = stock <= seuil ? "badge-danger" : "badge-succes";
+          return `<tr>
+            <td>${p.nom}</td>
+            <td>${(p.prix||0).toLocaleString()} $</td>
+            <td>${stock}</td>
+            <td>${seuil}</td>
+            <td><span class="badge ${badge}">${niveau}%</span></td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Il Sangue Rosso — Connexion</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-box">
+      <img src="img/logo.png" class="logo" alt="Il Sangue Rosso">
+      <h1>IL SANGUE ROSSO</h1>
+      <div class="devise">FAMIGLIA · ONORE · LEALTÀ</div>
+      <input type="text" id="identifiant" placeholder="Identifiant">
+      <input type="password" id="motdepasse" placeholder="Mot de passe">
+      <button onclick="seConnecter()">Se connecter</button>
+      <div class="login-error" id="loginError"></div>
+    </div>
+  </div>
+
+  <script src="js/firebase-config.js"></script>
+  <script>
+    // Redirige direct si déjà connecté
+    (function(){
+      const s = getSession();
+      if (s && s.id) window.location.href = "pages/dashboard.html";
+    })();
+
+    async function seConnecter() {
+      const idf = document.getElementById("identifiant").value.trim();
+      const mdp = document.getElementById("motdepasse").value;
+      const err = document.getElementById("loginError");
+      err.textContent = "";
+      if (!idf || !mdp) { err.textContent = "Identifiant et mot de passe requis."; return; }
+
+      try {
+        const snap = await db.ref("membres").once("value");
+        const membres = snap.val() || {};
+        let trouve = null, trouveId = null;
+        for (const [id, m] of Object.entries(membres)) {
+          if (m.identifiant === idf && m.motdepasse === mdp) { trouve = m; trouveId = id; break; }
+        }
+        if (!trouve) { err.textContent = "Identifiant ou mot de passe incorrect."; return; }
+        setSession({ id: trouveId, ...trouve });
+        window.location.href = "pages/dashboard.html";
+      } catch (e) {
+        err.textContent = "Erreur de connexion à la base.";
+        console.error(e);
+      }
+    }
+
+    document.getElementById("motdepasse").addEventListener("keydown", e => {
+      if (e.key === "Enter") seConnecter();
+    });
+  </script>
+</body>
+</html>

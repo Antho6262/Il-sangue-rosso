@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Four — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { stock:{}, four_purete:{}, membres:{} };
+let activeDrogueId = null;
+
+// Drogues avec tableau détaillé par pureté (à ajuster selon les produits configurés)
+const DROGUES_PURETE = ["Mexicana", "Cock", "Cannabis"];
+const PURETES = [50, 70, 90, 99];
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("four", MEMBRE);
+  render();
+  db.ref("stock").on("value", s => { RAW.stock = s.val() || {}; render(); });
+  db.ref("four_purete").on("value", s => { RAW.four_purete = s.val() || {}; render(); });
+  db.ref("membres").on("value", s => { RAW.membres = s.val() || {}; render(); });
+})();
+
+function drogueCat(){
+  return Object.entries(RAW.stock||{}).find(([id,c]) => c.nom === "Drogue");
+}
+
+function render(){
+  const content = document.getElementById("page-content");
+  const cat = drogueCat();
+  const produits = cat ? Object.entries(cat[1].produits||{}) : [];
+  if (!activeDrogueId && produits.length) activeDrogueId = produits[0][0];
+
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Four</h1><div class="sub">Production &amp; ventes de drogues</div></div></div>
+    ${produits.length ? `
+      <div class="tabs">
+        ${produits.map(([id,p]) => `<div class="tab ${activeDrogueId===id?'active':''}" onclick="selectDrogue('${id}')">${p.nom}</div>`).join("")}
+      </div>
+      <div id="fourContent"></div>
+      <div class="panel">
+        <h2>Vente rapide</h2>
+        <div class="form-row">
+          <div><label>Membre</label>
+            <select id="fourMembre">${Object.entries(RAW.membres||{}).map(([id,m]) => `<option value="${id}">${m.prenom}</option>`).join("")}</select>
+          </div>
+          <div><label>Produit</label>
+            <select id="fourProduit">${produits.map(([id,p]) => `<option value="${id}">${p.nom}</option>`).join("")}</select>
+          </div>
+          <div><label>Quantité</label><input type="number" id="fourQte" value="1"></div>
+          <div><label>Prix</label><input type="number" id="fourPrix"></div>
+          <div><label>Notes</label><input type="text" id="fourNotes"></div>
+        </div>
+        <button class="btn-or" onclick="venteRapide('${cat ? cat[0] : ''}')">Vendre</button>
+      </div>
+    ` : `<div class="empty-state">Aucune drogue configurée dans Stock (catégorie "Drogue").</div>`}
+  `;
+  if (produits.length) renderDrogue(cat, produits);
+}
+
+function selectDrogue(id){ activeDrogueId = id; render(); }
+
+function renderDrogue(cat, produits){
+  const [pid, p] = produits.find(([id]) => id === activeDrogueId);
+  const el = document.getElementById("fourContent");
+
+  if (DROGUES_PURETE.includes(p.nom)) {
+    el.innerHTML = `
+      <div class="panel">
+        <h2>${p.nom} — détail par pureté</h2>
+        <table>
+          <thead><tr><th>Pureté</th><th>Stock</th><th></th></tr></thead>
+          <tbody>
+            ${PURETES.map(pu => {
+              const val = RAW.four_purete?.[pid]?.[pu] || 0;
+              return `<tr>
+                <td>${pu}%</td><td>${val}</td>
+                <td>
+                  <button class="btn-ghost btn-sm" onclick="ajusterPurete('${pid}',${pu},1)">+1</button>
+                  <button class="btn-ghost btn-sm" onclick="ajusterPurete('${pid}',${pu},-1)">-1</button>
+                </td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+        <div class="sub" style="margin-top:10px;">Stock global : ${p.stock||0}</div>
+      </div>
+    `;
+  } else {
+    el.innerHTML = `
+      <div class="panel">
+        <h2>${p.nom} — stock global</h2>
+        <div class="cards-row">
+          <div class="card"><div class="label">Stock</div><div class="value">${p.stock||0}</div></div>
+        </div>
+        <button class="btn-ghost btn-sm" onclick="ajusterStockGlobal('${pid}',1)">+1</button>
+        <button class="btn-ghost btn-sm" onclick="ajusterStockGlobal('${pid}',-1)">-1</button>
+      </div>
+    `;
+  }
+}
+
+function ajusterPurete(pid, purete, delta){
+  const cat = drogueCat();
+  db.ref(`four_purete/${pid}/${purete}`).transaction(v => Math.max(0,(v||0)+delta));
+  db.ref(`stock/${cat[0]}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)+delta));
+}
+
+function ajusterStockGlobal(pid, delta){
+  const cat = drogueCat();
+  db.ref(`stock/${cat[0]}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)+delta));
+}
+
+function venteRapide(catId){
+  const membreId = document.getElementById("fourMembre").value;
+  const pid = document.getElementById("fourProduit").value;
+  const qte = parseFloat(document.getElementById("fourQte").value) || 0;
+  const prix = parseFloat(document.getElementById("fourPrix").value) || 0;
+  const notes = document.getElementById("fourNotes").value;
+  if (!membreId || !pid || !qte) return;
+
+  const p = RAW.stock[catId].produits[pid];
+  const montant = qte * prix;
+
+  db.ref("transactions").push({
+    membreId, type: "vente", produitId: pid, produitNom: p.nom, categorieId: catId,
+    quantite: qte, montant, type_argent: "sale", notes, source: "four",
+    date: new Date().toISOString()
+  });
+  db.ref(`stock/${catId}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)-qte));
+  db.ref("argent/sale").transaction(v => (v||0)+montant);
+
+  document.getElementById("fourQte").value = 1;
+  document.getElementById("fourPrix").value = "";
+  document.getElementById("fourNotes").value = "";
+}
+</script>
+</body>
+</html>

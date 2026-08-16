@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stats — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { transactions:{}, membres:{}, actions:{} };
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("stats", MEMBRE);
+  render();
+  db.ref("transactions").on("value", s => { RAW.transactions = s.val() || {}; render(); });
+  db.ref("membres").on("value", s => { RAW.membres = s.val() || {}; render(); });
+})();
+
+function render(){
+  const content = document.getElementById("page-content");
+  const transactions = Object.values(RAW.transactions||{});
+  const ventes = transactions.filter(t => t.type === "vente");
+
+  // Classement par membre (montant vendu)
+  const parMembre = {};
+  ventes.forEach(t => { parMembre[t.membreId] = (parMembre[t.membreId]||0) + (t.montant||0); });
+  const classement = Object.entries(parMembre).sort((a,b) => b[1]-a[1]);
+
+  // Par produit
+  const parProduit = {};
+  ventes.forEach(t => { parProduit[t.produitNom] = (parProduit[t.produitNom]||0) + (t.quantite||0); });
+  const produits = Object.entries(parProduit).sort((a,b) => b[1]-a[1]);
+
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Stats</h1><div class="sub">Vue analytique des ventes</div></div></div>
+
+    <div class="cards-row">
+      <div class="card"><div class="label">Total ventes</div><div class="value succes">${ventes.reduce((a,t)=>a+(t.montant||0),0).toLocaleString()} $</div></div>
+      <div class="card"><div class="label">Nb transactions</div><div class="value">${transactions.length}</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Classement des membres</h2>
+      ${classement.length ? `
+      <table>
+        <thead><tr><th>#</th><th>Membre</th><th>Total vendu</th></tr></thead>
+        <tbody>
+          ${classement.map(([id,montant],i) => `
+            <tr><td>${i+1}</td><td>${(RAW.membres[id]||{}).prenom||"?"}</td><td>${montant.toLocaleString()} $</td></tr>
+          `).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Aucune donnée.</div>`}
+    </div>
+
+    <div class="panel">
+      <h2>Ventes par produit</h2>
+      ${produits.length ? `
+      <table>
+        <thead><tr><th>Produit</th><th>Quantité vendue</th></tr></thead>
+        <tbody>
+          ${produits.map(([nom,qte]) => `<tr><td>${nom}</td><td>${qte}</td></tr>`).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Aucune donnée.</div>`}
+    </div>
+  `;
+}
+</script>
+</body>
+</html>

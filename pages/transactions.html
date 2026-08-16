@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transactions — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { transactions:{}, membres:{}, stock:{} };
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("transactions", MEMBRE);
+  render();
+  db.ref("transactions").on("value", s => { RAW.transactions = s.val() || {}; render(); });
+  db.ref("membres").on("value", s => { RAW.membres = s.val() || {}; render(); });
+  db.ref("stock").on("value", s => { RAW.stock = s.val() || {}; render(); });
+})();
+
+function tousProduits(){
+  const out = [];
+  Object.entries(RAW.stock||{}).forEach(([catId,cat]) => {
+    Object.entries(cat.produits||{}).forEach(([pid,p]) => out.push({ catId, pid, nom: p.nom, prix: p.prix }));
+  });
+  return out;
+}
+
+function render(){
+  const content = document.getElementById("page-content");
+  const produits = tousProduits();
+  const list = Object.entries(RAW.transactions||{}).sort((a,b) => (b[1].date||"").localeCompare(a[1].date||""));
+
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Transactions</h1><div class="sub">Achats / ventes</div></div></div>
+
+    <div class="panel">
+      <h2>Nouvelle transaction</h2>
+      <div class="form-row">
+        <div><label>Membre</label>
+          <select id="txMembre">${Object.entries(RAW.membres||{}).map(([id,m]) => `<option value="${id}">${m.prenom}</option>`).join("")}</select>
+        </div>
+        <div><label>Type</label>
+          <select id="txType"><option value="vente">Vente</option><option value="achat">Achat</option></select>
+        </div>
+        <div><label>Produit</label>
+          <select id="txProduit">${produits.map(p => `<option value="${p.catId}|${p.pid}">${p.nom}</option>`).join("")}</select>
+        </div>
+        <div><label>Quantité</label><input type="number" id="txQte" value="1"></div>
+        <div><label>Prix unitaire</label><input type="number" id="txPrix"></div>
+        <div><label>Type d'argent</label>
+          <select id="txTypeArgent"><option value="sale">Sale</option><option value="propre">Propre</option></select>
+        </div>
+        <div><label>Notes</label><input type="text" id="txNotes"></div>
+      </div>
+      <button class="btn-or" onclick="ajouterTransaction()">Valider</button>
+    </div>
+
+    <div class="panel">
+      <h2>Historique</h2>
+      ${list.length ? `
+      <table>
+        <thead><tr><th>Date</th><th>Membre</th><th>Type</th><th>Produit</th><th>Qté</th><th>Montant</th><th>Source</th><th></th></tr></thead>
+        <tbody>
+          ${list.map(([id,t]) => `
+            <tr>
+              <td>${t.date ? new Date(t.date).toLocaleString('fr-FR') : ""}</td>
+              <td>${(RAW.membres[t.membreId]||{}).prenom || "?"}</td>
+              <td><span class="badge ${t.type==='vente'?'badge-succes':'badge-or'}">${t.type}</span></td>
+              <td>${t.produitNom||""}</td>
+              <td>${t.quantite||""}</td>
+              <td>${(t.montant||0).toLocaleString()} $</td>
+              <td>${t.source||"-"}</td>
+              <td><button class="btn-ghost btn-sm" onclick="supprimerTransaction('${id}')">🗑</button></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Aucune transaction.</div>`}
+    </div>
+  `;
+}
+
+function ajouterTransaction(){
+  const membreId = document.getElementById("txMembre").value;
+  const type = document.getElementById("txType").value;
+  const [catId,pid] = document.getElementById("txProduit").value.split("|");
+  const qte = parseFloat(document.getElementById("txQte").value) || 0;
+  const prixU = parseFloat(document.getElementById("txPrix").value) || 0;
+  const typeArgent = document.getElementById("txTypeArgent").value;
+  const notes = document.getElementById("txNotes").value;
+  if (!membreId || !catId || !qte) return;
+
+  const produit = RAW.stock[catId]?.produits?.[pid];
+  const montant = qte * prixU;
+
+  db.ref("transactions").push({
+    membreId, type, produitId: pid, produitNom: produit?.nom || "", categorieId: catId,
+    quantite: qte, montant, type_argent: typeArgent, notes,
+    date: new Date().toISOString()
+  });
+
+  // Ajuste le stock et l'argent
+  const deltaStock = type === "vente" ? -qte : qte;
+  db.ref(`stock/${catId}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)+deltaStock));
+  const deltaArgent = type === "vente" ? montant : -montant;
+  db.ref(`argent/${typeArgent}`).transaction(v => (v||0)+deltaArgent);
+
+  document.getElementById("txQte").value = 1;
+  document.getElementById("txPrix").value = "";
+  document.getElementById("txNotes").value = "";
+}
+
+function supprimerTransaction(id){
+  if (!confirm("Supprimer cette transaction ?")) return;
+  db.ref(`transactions/${id}`).remove();
+}
+</script>
+</body>
+</html>

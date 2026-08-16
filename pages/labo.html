@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Labo — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+</head>
+<body>
+<div id="app-shell"></div>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let MEMBRE = null;
+let RAW = { stock:{}, labo_stock_commun:{} };
+let activeProduitId = null;
+
+function emojiProduit(nom){
+  nom = (nom||"").toLowerCase();
+  if (nom.includes("spore")) return "🍄";
+  if (nom.includes("héro") || nom.includes("hero")) return "💉";
+  if (nom.includes("cannabis") || nom.includes("weed")) return "🌿";
+  if (nom.includes("coca") || nom.includes("cock")) return "❄️";
+  if (nom.includes("meth")) return "🧪";
+  if (nom.includes("ecstasy") || nom.includes("mdma")) return "💊";
+  if (nom.includes("lean")) return "🥤";
+  return "⚗️";
+}
+
+(async function init(){
+  MEMBRE = await requireSession();
+  if (!MEMBRE) return;
+  initShell("labo", MEMBRE);
+  render();
+  db.ref("stock").on("value", s => { RAW.stock = s.val() || {}; render(); });
+  db.ref("labo_stock_commun").on("value", s => { RAW.labo_stock_commun = s.val() || {}; render(); });
+})();
+
+function produitsLabo(){
+  const cat = RAW.stock["labo"];
+  if (!cat) return [];
+  return Object.entries(cat.produits||{}).filter(([id,p]) => p.recipe);
+}
+
+function render(){
+  const content = document.getElementById("page-content");
+  const produits = produitsLabo();
+  if (!activeProduitId && produits.length) activeProduitId = produits[0][0];
+
+  content.innerHTML = `
+    <div class="page-header"><div><h1>Labo</h1><div class="sub">Production par produit fini</div></div></div>
+    ${produits.length ? `
+      <div class="tabs">
+        ${produits.map(([id,p]) => `<div class="tab ${activeProduitId===id?'active':''}" onclick="selectProduit('${id}')">${emojiProduit(p.nom)} ${p.nom}</div>`).join("")}
+      </div>
+      <div id="laboContent"></div>
+    ` : `<div class="empty-state">Aucune recette configurée. Crée les recettes dans Admin → Stock → catégorie Labo.</div>`}
+  `;
+  if (produits.length) renderProduit(produits);
+}
+
+function selectProduit(id){ activeProduitId = id; render(); }
+
+function stockAffiche(p){
+  // Si le produit est lié ("vend vers"), on lit en direct le stock du produit lié
+  if (p.venteCatId && p.venteProdId) {
+    const lie = RAW.stock[p.venteCatId]?.produits?.[p.venteProdId];
+    return lie ? (lie.stock||0) : 0;
+  }
+  return p.stock || 0;
+}
+
+function renderProduit(produits){
+  const [pid, p] = produits.find(([id]) => id === activeProduitId);
+  const recipe = p.recipe || [];
+  const el = document.getElementById("laboContent");
+
+  el.innerHTML = `
+    <div class="panel">
+      <h2>Nouvelle production — ${p.nom}</h2>
+      <div class="form-row">
+        <div><label>Quantité à produire</label><input type="number" id="laboQte" value="1"></div>
+      </div>
+      <button class="btn-or" onclick="lancerProduction('${pid}')">Produire</button>
+      ${p.venteCatId ? `<div class="sub" style="margin-top:10px;">Vend vers : ${RAW.stock[p.venteCatId]?.nom||"?"} → ${RAW.stock[p.venteCatId]?.produits?.[p.venteProdId]?.nom||"?"}</div>` : ""}
+    </div>
+
+    <div class="panel">
+      <h2>Stock — ${p.nom}</h2>
+      <table>
+        <thead><tr><th>Produit</th><th>Prix</th><th>Stock</th><th>Seuil</th><th>Niveau</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>${p.nom}</td>
+            <td>${(p.prix||0).toLocaleString()} $</td>
+            <td>${stockAffiche(p)}</td>
+            <td>${p.seuil||0}</td>
+            <td>${p.seuil ? Math.round((stockAffiche(p)/p.seuil)*100) : 0}%</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Stock d'ingrédients (commun)</h2>
+      ${recipe.length ? `
+      <table>
+        <thead><tr><th>Ingrédient</th><th>Requis / production</th><th>Stock dispo</th></tr></thead>
+        <tbody>
+          ${recipe.map(r => `
+            <tr>
+              <td>${r.nom}</td>
+              <td>${r.quantite}</td>
+              <td>${(RAW.labo_stock_commun[r.id]?.stock)||0}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>` : `<div class="empty-state">Pas de recette définie pour ce produit.</div>`}
+    </div>
+  `;
+}
+
+function lancerProduction(pid){
+  const qte = parseInt(document.getElementById("laboQte").value) || 0;
+  if (!qte) return;
+  const p = RAW.stock["labo"].produits[pid];
+  const recipe = p.recipe || [];
+
+  // Vérifie les ingrédients
+  for (const r of recipe) {
+    const dispo = RAW.labo_stock_commun[r.id]?.stock || 0;
+    if (dispo < r.quantite * qte) {
+      alert(`Pas assez de ${r.nom} (besoin ${r.quantite*qte}, dispo ${dispo}).`);
+      return;
+    }
+  }
+
+  // Décrémente les ingrédients
+  recipe.forEach(r => {
+    db.ref(`labo_stock_commun/${r.id}/stock`).transaction(v => (v||0) - r.quantite*qte);
+  });
+
+  // Crédite uniquement le stock lié si "vend vers" est configuré, sinon le stock du produit labo lui-même
+  if (p.venteCatId && p.venteProdId) {
+    db.ref(`stock/${p.venteCatId}/produits/${p.venteProdId}/stock`).transaction(v => (v||0) + qte);
+  } else {
+    db.ref(`stock/labo/produits/${pid}/stock`).transaction(v => (v||0) + qte);
+  }
+
+  document.getElementById("laboQte").value = 1;
+}
+</script>
+</body>
+</html>
