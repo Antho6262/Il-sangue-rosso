@@ -3,69 +3,112 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Il Sangue Rosso — Connexion</title>
+<title>Il Sangue Rosso</title>
 <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="login-body">
+
+<div class="login-wrap">
+  <div class="login-card fade-in">
+    <img src="img/logo.png" alt="Il Sangue Rosso" class="login-coin">
+    <div class="login-brand">IL SANGUE ROSSO</div>
+    <div class="login-sub">Famiglia · Onore · Lealtà</div>
+    <div class="sigil-rule"></div>
+
+    <div class="field">
+      <label>Membre</label>
+      <select id="selMembre"><option value="">Chargement…</option></select>
+    </div>
+    <div class="field">
+      <label>Mot de passe</label>
+      <input type="password" id="inpPass" placeholder="••••••••">
+    </div>
+    <button class="btn btn-primary" onclick="doLogin()">Se connecter</button>
+    <div class="login-error" id="errMsg"></div>
+    <div class="login-foot"><a href="#" onclick="toggleOublie(event)" style="color:var(--gold)">Mot de passe oublié ?</a></div>
+    <div id="oublieWrap" style="display:none;margin-top:10px;">
+      <p class="small muted">Une demande sera envoyée à un admin, qui réinitialisera ton mot de passe.</p>
+      <button class="btn btn-gold" style="width:100%;" onclick="envoyerDemandeOubli()">Envoyer la demande</button>
+      <div class="small" id="oublieMsg" style="margin-top:6px;"></div>
+    </div>
+    <div class="login-foot">Première installation ? <a href="setup.html" style="color:var(--gold)">Initialiser le site</a></div>
+  </div>
+</div>
+
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
-</head>
-<body>
-  <div class="login-wrap">
-    <div class="login-box">
-      <img src="img/logo.png" class="logo" alt="Il Sangue Rosso">
-      <h1>IL SANGUE ROSSO</h1>
-      <div class="devise">FAMIGLIA · ONORE · LEALTÀ</div>
-      <label style="text-align:left; margin-bottom:5px;">Membre</label>
-      <select id="membreSelect">
-        <option value="">— Sélectionner —</option>
-      </select>
-      <input type="password" id="motdepasse" placeholder="Mot de passe">
-      <button onclick="seConnecter()">Se connecter</button>
-      <div class="login-error" id="loginError"></div>
-    </div>
-  </div>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="js/firebase-config.js"></script>
+<script>
+let MEMBRES = {};
 
-  <script src="js/firebase-config.js"></script>
-  <script>
-    let MEMBRES_CACHE = {};
-
-    // Redirige direct si déjà connecté
-    (function(){
-      const s = getSession();
-      if (s && s.id) window.location.href = "pages/dashboard.html";
-    })();
-
-    // Charge la liste des membres (triés par prénom) dans le menu déroulant
-    (async function chargerMembres(){
-      const snap = await db.ref("membres").once("value");
-      MEMBRES_CACHE = snap.val() || {};
-      const sel = document.getElementById("membreSelect");
-      Object.entries(MEMBRES_CACHE)
-        .sort((a,b) => (a[1].prenom||"").localeCompare(b[1].prenom||""))
-        .forEach(([id, m]) => {
-          const opt = document.createElement("option");
-          opt.value = id;
-          opt.textContent = m.prenom;
-          sel.appendChild(opt);
-        });
-    })();
-
-    async function seConnecter() {
-      const membreId = document.getElementById("membreSelect").value;
-      const mdp = document.getElementById("motdepasse").value;
-      const err = document.getElementById("loginError");
-      err.textContent = "";
-      if (!membreId || !mdp) { err.textContent = "Sélectionne ton nom et entre ton mot de passe."; return; }
-
-      const m = MEMBRES_CACHE[membreId];
-      if (!m || m.motdepasse !== mdp) { err.textContent = "Mot de passe incorrect."; return; }
-
-      setSession({ id: membreId, ...m });
-      window.location.href = "pages/dashboard.html";
-    }
-
-    document.getElementById("motdepasse").addEventListener("keydown", e => {
-      if (e.key === "Enter") seConnecter();
+async function chargerMembres() {
+  const sel = document.getElementById("selMembre");
+  try {
+    const snap = await db.ref("membres").once("value");
+    const data = snap.val() || {};
+    MEMBRES = data;
+    sel.innerHTML = '<option value="">— Sélectionner —</option>';
+    entries(data).forEach(([id, m]) => {
+      if (m.actif === false) return;
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = m.prenom + (m.nom ? " " + m.nom : "");
+      sel.appendChild(opt);
     });
-  </script>
+    if (Object.keys(data).length === 0) {
+      sel.innerHTML = '<option value="">Aucun membre — lancez l\'initialisation</option>';
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="">Erreur de connexion Firebase</option>';
+    document.getElementById("errMsg").textContent = "Vérifiez la config Firebase (js/firebase-config.js).";
+  }
+}
+
+function doLogin() {
+  const id = document.getElementById("selMembre").value;
+  const pass = document.getElementById("inpPass").value.trim();
+  const errEl = document.getElementById("errMsg");
+  errEl.textContent = "";
+  if (!id) { errEl.textContent = "Sélectionnez un membre."; return; }
+  const m = MEMBRES[id];
+  if (!m || m.mot_de_passe !== pass) {
+    errEl.textContent = "Mot de passe incorrect.";
+    return;
+  }
+  if (m.actif === false) {
+    errEl.textContent = "Compte désactivé.";
+    return;
+  }
+  authReady.then(user => {
+    return db.ref("sessions/" + user.uid).set(id);
+  }).then(() => {
+    setSession({ id, prenom: m.prenom, nom: m.nom || "", grade: m.grade, role: m.role || "membre" });
+    window.location.href = "pages/dashboard.html";
+  }).catch(() => {
+    errEl.textContent = "Erreur de connexion.";
+  });
+}
+
+function toggleOublie(e) {
+  e.preventDefault();
+  const wrap = document.getElementById("oublieWrap");
+  wrap.style.display = wrap.style.display === "none" ? "block" : "none";
+}
+
+async function envoyerDemandeOubli() {
+  const id = document.getElementById("selMembre").value;
+  const msg = document.getElementById("oublieMsg");
+  if (!id) { msg.textContent = "Sélectionne d'abord ton membre dans la liste ci-dessus."; return; }
+  const m = MEMBRES[id];
+  await db.ref("reset_requests/" + id).set({
+    membre_id: id, prenom: m.prenom, nom: m.nom || "", date: new Date().toISOString().slice(0, 10), createdAt: Date.now()
+  });
+  msg.textContent = "Demande envoyée. Un admin va réinitialiser ton mot de passe.";
+}
+
+document.getElementById("inpPass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+chargerMembres();
+</script>
 </body>
 </html>

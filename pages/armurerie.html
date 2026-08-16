@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Armurerie — Il Sangue Rosso</title>
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div id="shell"></div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="../js/firebase-config.js"></script>
+<script src="../js/app.js"></script>
+<script>
+let SESSION, MEMBRES = {}, ARMES = {};
+
+const CATALOGUE_ARMES = [
+  { nom: "M9A3", photo: "../img/armes/m9a3.png" },
+  { nom: "Vortex Full", photo: "../img/armes/vortex_full.png" },
+  { nom: "Micro SMG", photo: "../img/armes/micro_smg.png" },
+  { nom: "SNS", photo: "../img/armes/sns.png" },
+  { nom: "SNS Pico", photo: "../img/armes/sns_pico.png" },
+  { nom: "Glock", photo: "../img/armes/glock.png" },
+  { nom: "Glock 17", photo: "../img/armes/glock17.png" }
+];
+
+function remplirCatalogue() {
+  const sel = document.getElementById("wModele");
+  sel.innerHTML = "";
+  sel.appendChild(new Option("— Choisir —", ""));
+  CATALOGUE_ARMES.forEach(a => sel.appendChild(new Option(a.nom, a.nom)));
+  majPhoto();
+}
+
+function majPhoto() {
+  const nom = document.getElementById("wModele").value;
+  const arme = CATALOGUE_ARMES.find(a => a.nom === nom);
+  const preview = document.getElementById("wPhotoPreview");
+  if (arme) { preview.src = arme.photo; preview.style.display = "block"; }
+  else { preview.src = ""; preview.style.display = "none"; }
+}
+
+function renderContent() {
+  document.getElementById("content").innerHTML = `
+    <h1>Armurerie</h1>
+    <div class="sigil-rule"></div>
+
+    <div class="panel mt16">
+      <div class="panel-head"><h2>Nouvelle arme</h2></div>
+      <div class="row">
+        <div><label class="l">Membre</label><select id="wMembre"></select></div>
+        <div><label class="l">Type d'arme</label><input type="text" id="wType" placeholder="Ex: B1, B2, B10..."></div>
+        <div><label class="l">Modèle (photo)</label><select id="wModele" onchange="majPhoto()"></select></div>
+        <div><label class="l">Numéro de série</label><input type="text" id="wSerie" placeholder="Ex: A123456"></div>
+        <div><label class="l">Aperçu</label><div style="text-align:left;"><img id="wPhotoPreview" style="height:80px;display:none;"></div></div>
+      </div>
+      <button class="btn btn-primary mt16" onclick="ajouterArme()">Enregistrer</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Armes enregistrées</h2></div>
+      <table><thead><tr><th>Photo</th><th>Membre</th><th>Type</th><th>Modèle</th><th>Numéro de série</th><th>Date</th><th></th></tr></thead>
+        <tbody id="tblArmes"><tr class="empty-row"><td colspan="7">Chargement…</td></tr></tbody></table>
+    </div>
+  `;
+}
+
+function renderMembresSelect() {
+  const sel = document.getElementById("wMembre");
+  const prevValue = sel.value;
+  sel.innerHTML = "";
+  entries(MEMBRES).forEach(([id, m]) => {
+    if (m.actif === false) return;
+    sel.appendChild(new Option(m.prenom + (m.nom ? " " + m.nom : ""), id, id === SESSION.id, id === (prevValue || SESSION.id)));
+  });
+}
+
+async function ajouterArme() {
+  const membreId = document.getElementById("wMembre").value;
+  const type = document.getElementById("wType").value.trim();
+  const serie = document.getElementById("wSerie").value.trim();
+  const modele = document.getElementById("wModele").value;
+  const arme = CATALOGUE_ARMES.find(a => a.nom === modele);
+  const photo = arme ? arme.photo : "";
+  if (!membreId || !type || !serie) { toast("Complétez le formulaire.", true); return; }
+  const m = MEMBRES[membreId] || {};
+  await db.ref("armurerie/" + uid()).set({
+    membre_id: membreId, prenom_membre: m.prenom || "", nom_membre: m.nom || "",
+    type_arme: type, modele: modele || "", numero_serie: serie, photo_url: photo || "",
+    date: todayISO(), par: SESSION.prenom, createdAt: Date.now()
+  });
+  toast("Arme enregistrée.");
+  document.getElementById("wType").value = ""; document.getElementById("wSerie").value = "";
+}
+
+function photoPourArme(a) {
+  if (a.photo_url) return a.photo_url;
+  const nomRef = a.modele || a.type_arme || "";
+  const match = CATALOGUE_ARMES.find(c => c.nom.toLowerCase() === nomRef.toLowerCase());
+  return match ? match.photo : "";
+}
+
+function compresserImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const maxH = 120;
+        const scale = maxH / img.height;
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width * scale;
+        canvas.height = maxH;
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function importerPhoto(id, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const dataUrl = await compresserImage(file);
+  await db.ref("armurerie/" + id + "/photo_url").set(dataUrl);
+  toast("Photo importée.");
+}
+
+async function assignerModele(id, nom) {
+  if (!nom) { await db.ref("armurerie/" + id + "/modele").set(null); return; }
+  const arme = CATALOGUE_ARMES.find(a => a.nom === nom);
+  if (!arme) return;
+  await db.ref("armurerie/" + id).update({ modele: nom, photo_url: arme.photo });
+  toast("Modèle associé.");
+}
+
+function renderArmes() {
+  const list = entries(ARMES).map(([id, a]) => ({ id, ...a })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const canDelete = SESSION.role === "admin";
+  document.getElementById("tblArmes").innerHTML = list.length ? list.map(a => {
+    const photo = photoPourArme(a);
+    const cellPhoto = `
+      ${photo ? `<img src="${photo}" alt="${a.type_arme}" style="height:70px;cursor:pointer;" onclick="document.getElementById('imp_${a.id}').click()">` : ""}
+      <label class="btn btn-sm" style="cursor:pointer;">${photo ? "Changer" : "+ Importer"}<input type="file" accept="image/*" id="imp_${a.id}" style="display:none;" onchange="importerPhoto('${a.id}', this)"></label>
+    `;
+    const modeleActuel = a.modele || (CATALOGUE_ARMES.find(c => c.nom.toLowerCase() === (a.type_arme || "").toLowerCase()) ? a.type_arme : "");
+    const options = ['<option value="">— Choisir —</option>'].concat(
+      CATALOGUE_ARMES.map(c => `<option value="${c.nom}" ${c.nom === modeleActuel ? "selected" : ""}>${c.nom}</option>`)
+    ).join("");
+    const cellModele = `<select onchange="assignerModele('${a.id}', this.value)">${options}</select>`;
+    return `
+    <tr><td style="text-align:left;">${cellPhoto}</td>
+    <td>${a.prenom_membre} ${a.nom_membre || ""}</td><td>${a.type_arme}</td><td>${cellModele}</td><td class="mono">${a.numero_serie}</td><td>${a.date}</td>
+    ${canDelete || a.membre_id === SESSION.id ? `<td><span class="btn btn-sm btn-danger" onclick="supprimerArme('${a.id}')">Suppr.</span></td>` : "<td></td>"}
+    </tr>
+  `;
+  }).join("") : '<tr class="empty-row"><td colspan="7">Aucune arme enregistrée</td></tr>';
+}
+
+async function supprimerArme(id) {
+  if (!confirm("Supprimer cette arme ?")) return;
+  await db.ref("armurerie/" + id).remove();
+  toast("Arme supprimée.");
+}
+
+(async function () {
+  await authReady;
+  SESSION = await initShell("armurerie", "Armurerie");
+  if (!SESSION) return;
+  renderContent();
+  remplirCatalogue();
+  db.ref("membres").on("value", snap => { MEMBRES = snap.val() || {}; renderMembresSelect(); renderArmes(); });
+  db.ref("armurerie").on("value", snap => { ARMES = snap.val() || {}; renderArmes(); });
+})();
+</script>
+</body>
+</html>

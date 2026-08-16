@@ -5,145 +5,275 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Four — Il Sangue Rosso</title>
 <link rel="stylesheet" href="../css/style.css">
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
-<div id="app-shell"></div>
+<div id="shell"></div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="../js/firebase-config.js"></script>
 <script src="../js/app.js"></script>
 <script>
-let MEMBRE = null;
-let RAW = { stock:{}, four_purete:{}, membres:{} };
-let activeDrogueId = null;
+let SESSION, STOCK = {}, MEMBRES = {}, FOUR_PURETE = {};
+const PURETES = ["50", "70", "90", "99"];
+let ACTIVE_DROGUE_TAB = null;
 
-// Drogues avec tableau détaillé par pureté (à ajuster selon les produits configurés)
-const DROGUES_PURETE = ["Mexicana", "Cock", "Cannabis"];
-const PURETES = [50, 70, 90, 99];
-
-(async function init(){
-  MEMBRE = await requireSession();
-  if (!MEMBRE) return;
-  initShell("four", MEMBRE);
-  render();
-  db.ref("stock").on("value", s => { RAW.stock = s.val() || {}; render(); });
-  db.ref("four_purete").on("value", s => { RAW.four_purete = s.val() || {}; render(); });
-  db.ref("membres").on("value", s => { RAW.membres = s.val() || {}; render(); });
-})();
-
-function drogueCat(){
-  return Object.entries(RAW.stock||{}).find(([id,c]) => c.nom === "Drogue");
+// Trouve la catégorie "Drogue" quel que soit son id réel.
+function getCatDrogue() {
+  const entry = entries(STOCK).find(([, cat]) => (cat.nom || "").toLowerCase() === "drogue");
+  return entry ? { id: entry[0], ...entry[1] } : null;
 }
 
-function render(){
-  const content = document.getElementById("page-content");
-  const cat = drogueCat();
-  const produits = cat ? Object.entries(cat[1].produits||{}) : [];
-  if (!activeDrogueId && produits.length) activeDrogueId = produits[0][0];
+function renderContent() {
+  document.getElementById("content").innerHTML = `
+    <h1>🔥 Four</h1>
+    <div class="sigil-rule"></div>
+    <p class="muted small">Stock détaillé par drogue et par pureté (visible uniquement ici) — chaque ajout met aussi à jour le stock global de la drogue.</p>
 
-  content.innerHTML = `
-    <div class="page-header"><div><h1>Four</h1><div class="sub">Production &amp; ventes de drogues</div></div></div>
-    ${produits.length ? `
-      <div class="tabs">
-        ${produits.map(([id,p]) => `<div class="tab ${activeDrogueId===id?'active':''}" onclick="selectDrogue('${id}')">${p.nom}</div>`).join("")}
+    <div class="tabs mt16" id="drogueTabsBar"></div>
+    <div id="drogueTabContent"></div>
+
+    <div class="panel mt16">
+      <div class="panel-head"><h2>Nouvelle vente — Four</h2></div>
+      <div class="row">
+        <div><label class="l">Membre</label><select id="tMembre"></select></div>
+        <div><label class="l">Produit</label><select id="tProduit"></select></div>
+        <div><label class="l">Quantité</label><input type="number" id="tQte" value="1"></div>
+        <div><label class="l">Prix unitaire ($)</label><input type="number" id="tPrix" value="0"></div>
       </div>
-      <div id="fourContent"></div>
-      <div class="panel">
-        <h2>Vente rapide</h2>
-        <div class="form-row">
-          <div><label>Membre</label>
-            <select id="fourMembre">${Object.entries(RAW.membres||{}).map(([id,m]) => `<option value="${id}">${m.prenom}</option>`).join("")}</select>
-          </div>
-          <div><label>Produit</label>
-            <select id="fourProduit">${produits.map(([id,p]) => `<option value="${id}">${p.nom}</option>`).join("")}</select>
-          </div>
-          <div><label>Quantité</label><input type="number" id="fourQte" value="1"></div>
-          <div><label>Prix</label><input type="number" id="fourPrix"></div>
-          <div><label>Notes</label><input type="text" id="fourNotes"></div>
-        </div>
-        <button class="btn-or" onclick="venteRapide('${cat ? cat[0] : ''}')">Vendre</button>
+      <div class="row mt8">
+        <div><label class="l">Date</label><input type="date" id="tDate"></div>
+        <div style="flex:2"><label class="l">Notes</label><input type="text" id="tNotes" placeholder="Optionnel"></div>
       </div>
-    ` : `<div class="empty-state">Aucune drogue configurée dans Stock (catégorie "Drogue").</div>`}
+      <button class="btn btn-primary mt16" onclick="ajouterTransaction()">Enregistrer la vente</button>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><h2>Historique — Four</h2><button class="btn btn-sm" onclick="exporterTransactionsCSV()">⬇ Exporter CSV</button></div>
+      <table><thead><tr><th>Date</th><th>Membre</th><th>Produit</th><th>Qté</th><th>Total</th><th></th></tr></thead>
+        <tbody id="tblTransactions"><tr class="empty-row"><td colspan="6">Chargement…</td></tr></tbody></table>
+    </div>
   `;
-  if (produits.length) renderDrogue(cat, produits);
+  document.getElementById("tDate").value = todayISO();
 }
 
-function selectDrogue(id){ activeDrogueId = id; render(); }
+function switchDrogueTab(pid) {
+  ACTIVE_DROGUE_TAB = pid;
+  renderDrogueTabs();
+}
 
-function renderDrogue(cat, produits){
-  const [pid, p] = produits.find(([id]) => id === activeDrogueId);
-  const el = document.getElementById("fourContent");
+const PURETE_DROGUES_AUTORISEES = ["mexicana", "cock", "cannabis"];
 
-  if (DROGUES_PURETE.includes(p.nom)) {
-    el.innerHTML = `
+function renderDrogueTabs() {
+  const catDrogue = getCatDrogue();
+  const produits = catDrogue ? entries(catDrogue.produits) : [];
+  const tabsBar = document.getElementById("drogueTabsBar");
+  const zone = document.getElementById("drogueTabContent");
+  if (!tabsBar || !zone) return;
+
+  if (!produits.length) {
+    tabsBar.innerHTML = "";
+    zone.innerHTML = '<div class="panel"><p class="muted small">Aucune drogue dans la catégorie Stock Drogue — ajoute-en dans Admin → Stock.</p></div>';
+    return;
+  }
+  if (!ACTIVE_DROGUE_TAB || !produits.find(([pid]) => pid === ACTIVE_DROGUE_TAB)) ACTIVE_DROGUE_TAB = produits[0][0];
+
+  tabsBar.innerHTML = produits.map(([pid, p]) =>
+    `<div class="tab ${ACTIVE_DROGUE_TAB === pid ? "active" : ""}" onclick="switchDrogueTab('${pid}')">${p.nom}</div>`
+  ).join("");
+
+  const pid = ACTIVE_DROGUE_TAB;
+  const p = catDrogue.produits[pid];
+  const nomDrogue = p.nom;
+  const avecPurete = PURETE_DROGUES_AUTORISEES.includes((nomDrogue || "").toLowerCase());
+
+  if (avecPurete) {
+    const purete = FOUR_PURETE[pid] || {};
+    zone.innerHTML = `
       <div class="panel">
-        <h2>${p.nom} — détail par pureté</h2>
+        <div class="panel-head"><h2>🔥 ${nomDrogue} — par pureté</h2></div>
         <table>
-          <thead><tr><th>Pureté</th><th>Stock</th><th></th></tr></thead>
+          <thead><tr><th>Pureté</th><th>Stock (Four)</th><th>Quantité</th><th></th><th></th></tr></thead>
           <tbody>
-            ${PURETES.map(pu => {
-              const val = RAW.four_purete?.[pid]?.[pu] || 0;
-              return `<tr>
-                <td>${pu}%</td><td>${val}</td>
-                <td>
-                  <button class="btn-ghost btn-sm" onclick="ajusterPurete('${pid}',${pu},1)">+1</button>
-                  <button class="btn-ghost btn-sm" onclick="ajusterPurete('${pid}',${pu},-1)">-1</button>
-                </td>
-              </tr>`;
-            }).join("")}
+            ${PURETES.map(pu => `
+              <tr>
+                <td><strong>${pu}%</strong></td>
+                <td class="mono">${Number(purete[pu]) || 0}</td>
+                <td><input type="number" id="qtePurete_${pu}" value="1" min="1" style="max-width:100px;"></td>
+                <td><span class="btn btn-sm btn-gold" onclick="mouvementPurete('${pid}','${pu}','ajout')">+ Ajouter</span></td>
+                <td><span class="btn btn-sm btn-danger" onclick="mouvementPurete('${pid}','${pu}','retrait')">− Retirer</span></td>
+              </tr>
+            `).join("")}
           </tbody>
         </table>
-        <div class="sub" style="margin-top:10px;">Stock global : ${p.stock||0}</div>
+        <p class="small muted mt8">Chaque ajout/retrait ici met aussi à jour le stock global de "${nomDrogue}" dans Stock Drogue.</p>
       </div>
     `;
   } else {
-    el.innerHTML = `
+    zone.innerHTML = `
       <div class="panel">
-        <h2>${p.nom} — stock global</h2>
-        <div class="cards-row">
-          <div class="card"><div class="label">Stock</div><div class="value">${p.stock||0}</div></div>
+        <div class="panel-head"><h2>🔥 ${nomDrogue}</h2></div>
+        <div class="row">
+          <div><label class="l">Stock actuel</label><input type="text" value="${Number(p.stock) || 0}" disabled></div>
+          <div><label class="l">Quantité</label><input type="number" id="qteSimple" value="1" min="1"></div>
+          <div style="display:flex;align-items:flex-end;gap:8px;">
+            <span class="btn btn-gold" onclick="mouvementSimple('${pid}','ajout')">+ Ajouter</span>
+            <span class="btn btn-danger" onclick="mouvementSimple('${pid}','retrait')">− Retirer</span>
+          </div>
         </div>
-        <button class="btn-ghost btn-sm" onclick="ajusterStockGlobal('${pid}',1)">+1</button>
-        <button class="btn-ghost btn-sm" onclick="ajusterStockGlobal('${pid}',-1)">-1</button>
+        <p class="small muted mt8">Pas de suivi par pureté pour ce produit — juste le stock global de "${nomDrogue}".</p>
       </div>
     `;
   }
 }
 
-function ajusterPurete(pid, purete, delta){
-  const cat = drogueCat();
-  db.ref(`four_purete/${pid}/${purete}`).transaction(v => Math.max(0,(v||0)+delta));
-  db.ref(`stock/${cat[0]}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)+delta));
+async function mouvementSimple(pid, sens) {
+  const qte = Number(document.getElementById("qteSimple").value) || 0;
+  if (qte <= 0) { toast("Quantité invalide.", true); return; }
+  const catDrogue = getCatDrogue();
+  const ref = db.ref(`stock/${catDrogue.id}/produits/${pid}/stock`);
+  const snap = await ref.once("value");
+  const current = Number(snap.val()) || 0;
+  await ref.set(sens === "ajout" ? current + qte : Math.max(0, current - qte));
+  toast("Stock mis à jour.");
 }
 
-function ajusterStockGlobal(pid, delta){
-  const cat = drogueCat();
-  db.ref(`stock/${cat[0]}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)+delta));
+async function mouvementPurete(pid, purete, sens) {
+  const qte = Number(document.getElementById(`qtePurete_${purete}`).value) || 0;
+  if (qte <= 0) { toast("Quantité invalide.", true); return; }
+
+  const refPurete = db.ref(`four_purete/${pid}/${purete}`);
+  const snapPurete = await refPurete.once("value");
+  const currentPurete = Number(snapPurete.val()) || 0;
+  await refPurete.set(sens === "ajout" ? currentPurete + qte : Math.max(0, currentPurete - qte));
+
+  const catDrogue = getCatDrogue();
+  const refGlobal = db.ref(`stock/${catDrogue.id}/produits/${pid}/stock`);
+  const snapGlobal = await refGlobal.once("value");
+  const currentGlobal = Number(snapGlobal.val()) || 0;
+  await refGlobal.set(sens === "ajout" ? currentGlobal + qte : Math.max(0, currentGlobal - qte));
+
+  toast("Stock mis à jour.");
 }
 
-function venteRapide(catId){
-  const membreId = document.getElementById("fourMembre").value;
-  const pid = document.getElementById("fourProduit").value;
-  const qte = parseFloat(document.getElementById("fourQte").value) || 0;
-  const prix = parseFloat(document.getElementById("fourPrix").value) || 0;
-  const notes = document.getElementById("fourNotes").value;
-  if (!membreId || !pid || !qte) return;
+let TRANSACTIONS_LIST = [];
 
-  const p = RAW.stock[catId].produits[pid];
-  const montant = qte * prix;
+function exporterTransactionsCSV() {
+  if (!TRANSACTIONS_LIST.length) { toast("Aucune vente à exporter.", true); return; }
+  const headers = ["Date", "Membre", "Produit", "Quantité", "Prix unitaire", "Total", "Notes"];
+  const lignes = TRANSACTIONS_LIST.map(t => [
+    t.date, t.prenom_membre || "", t.produit_nom, t.quantite, t.prix, t.quantite * t.prix, t.notes || ""
+  ]);
+  const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = [headers.map(esc).join(";"), ...lignes.map(l => l.map(esc).join(";"))].join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "four_transactions_" + todayISO() + ".csv";
+  a.click();
+}
 
-  db.ref("transactions").push({
-    membreId, type: "vente", produitId: pid, produitNom: p.nom, categorieId: catId,
-    quantite: qte, montant, type_argent: "sale", notes, source: "four",
-    date: new Date().toISOString()
+function renderProduitsMembresSelects() {
+  const selM = document.getElementById("tMembre");
+  const prevM = selM.value;
+  selM.innerHTML = "";
+  entries(MEMBRES).forEach(([id, m]) => {
+    if (m.actif === false) return;
+    selM.appendChild(new Option(m.prenom + (m.nom ? " " + m.nom : ""), id, id === SESSION.id, id === (prevM || SESSION.id)));
   });
-  db.ref(`stock/${catId}/produits/${pid}/stock`).transaction(v => Math.max(0,(v||0)-qte));
-  db.ref("argent/sale").transaction(v => (v||0)+montant);
 
-  document.getElementById("fourQte").value = 1;
-  document.getElementById("fourPrix").value = "";
-  document.getElementById("fourNotes").value = "";
+  const sel = document.getElementById("tProduit");
+  const prevP = sel.value;
+  sel.innerHTML = "";
+  const catDrogue = getCatDrogue();
+  if (catDrogue) entries(catDrogue.produits).forEach(([pid, p]) =>
+    sel.appendChild(new Option(p.nom, catDrogue.id + "::" + pid + "::" + (p.prix || 0)))
+  );
+  if (!sel.options.length) sel.innerHTML = '<option value="">Aucune drogue — créez le stock dans Admin</option>';
+  else if (prevP) sel.value = prevP;
+  sel.onchange = () => { const parts = sel.value.split("::"); if (parts[2]) document.getElementById("tPrix").value = parts[2]; };
+
+  renderDrogueTabs();
 }
+
+async function ajouterTransaction() {
+  const val = document.getElementById("tProduit").value;
+  if (!val) { toast("Sélectionnez un produit.", true); return; }
+  const [catId, pid] = val.split("::");
+  const qte = Number(document.getElementById("tQte").value) || 0;
+  const prix = Number(document.getElementById("tPrix").value) || 0;
+  if (qte <= 0) { toast("Quantité invalide.", true); return; }
+  const total = qte * prix;
+  const prodNom = STOCK[catId].produits[pid].nom;
+  const id = uid();
+
+  const membreId = document.getElementById("tMembre").value;
+  const m = MEMBRES[membreId] || {};
+  await db.ref("transactions/" + id).set({
+    type: "vente", source: "four", groupe: "", telephone: "",
+    produit_id: pid, produit_nom: prodNom, catId, quantite: qte, prix,
+    type_argent: "sale", notes: document.getElementById("tNotes").value.trim(),
+    membre_id: membreId, prenom_membre: m.prenom || SESSION.prenom,
+    date: document.getElementById("tDate").value || todayISO(), createdAt: Date.now()
+  });
+
+  const stockRef = db.ref(`stock/${catId}/produits/${pid}/stock`);
+  const snap = await stockRef.once("value");
+  const current = Number(snap.val()) || 0;
+  await stockRef.set(Math.max(0, current - qte));
+
+  await db.ref(`argent/sale/${id}`).set({
+    date: document.getElementById("tDate").value || todayISO(),
+    description: "Vente — " + prodNom + " x" + qte + " [Four]",
+    type: "Entrée", montant: total, responsable: SESSION.prenom, createdAt: Date.now()
+  });
+
+  toast("Vente enregistrée.");
+  document.getElementById("tNotes").value = "";
+}
+
+let TRANSACTIONS_RAW = {};
+
+function renderTransactions() {
+  const list = entries(TRANSACTIONS_RAW)
+    .map(([id, t]) => ({ id, ...t }))
+    .filter(t => t.source === "four")
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  TRANSACTIONS_LIST = list;
+  const canDelete = SESSION.role === "admin";
+  document.getElementById("tblTransactions").innerHTML = list.length ? list.map(t => `
+    <tr><td>${t.date}</td><td>${t.prenom_membre || "-"}</td>
+    <td>${t.produit_nom}</td><td>${t.quantite}</td><td>${formatMoney(t.quantite * t.prix)}</td>
+    <td>${canDelete ? `<span class="btn btn-sm btn-danger" onclick="supprimerTransaction('${t.id}')">Suppr.</span>` : ""}</td></tr>
+  `).join("") : '<tr class="empty-row"><td colspan="6">Aucune vente Four</td></tr>';
+}
+
+async function supprimerTransaction(id) {
+  if (!confirm("Supprimer cette vente ? Le stock et l'argent seront annulés (rollback).")) return;
+  const snap = await db.ref("transactions/" + id).once("value");
+  const t = snap.val();
+  if (t) {
+    const stockRef = db.ref(`stock/${t.catId}/produits/${t.produit_id}/stock`);
+    const sSnap = await stockRef.once("value");
+    const current = Number(sSnap.val()) || 0;
+    await stockRef.set(current + t.quantite);
+    await db.ref(`argent/sale/${id}`).remove();
+  }
+  await db.ref("transactions/" + id).remove();
+  toast("Transaction supprimée et rollback effectué.");
+}
+
+(async function () {
+  await authReady;
+  SESSION = await initShell("four", "Four");
+  if (!SESSION) return;
+  renderContent();
+  db.ref("stock").on("value", snap => { STOCK = snap.val() || {}; renderProduitsMembresSelects(); renderDrogueTabs(); });
+  db.ref("four_purete").on("value", snap => { FOUR_PURETE = snap.val() || {}; renderDrogueTabs(); });
+  db.ref("membres").on("value", snap => { MEMBRES = snap.val() || {}; renderProduitsMembresSelects(); });
+  db.ref("transactions").on("value", snap => { TRANSACTIONS_RAW = snap.val() || {}; renderTransactions(); });
+})();
 </script>
 </body>
 </html>

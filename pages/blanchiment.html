@@ -5,84 +5,100 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Blanchiment — Il Sangue Rosso</title>
 <link rel="stylesheet" href="../css/style.css">
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body>
-<div id="app-shell"></div>
+<div id="shell"></div>
+
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="../js/firebase-config.js"></script>
 <script src="../js/app.js"></script>
 <script>
-let MEMBRE = null;
-let RAW = { argent:{sale:0,propre:0}, config:{blanchiment_taux:0.7}, blanchiment:{} };
+let SESSION, TAUX = 35;
 
-(async function init(){
-  MEMBRE = await requireSession();
-  if (!MEMBRE) return;
-  initShell("blanchiment", MEMBRE);
-  render();
-  db.ref("argent").on("value", s => { RAW.argent = s.val() || {sale:0,propre:0}; render(); });
-  db.ref("config").on("value", s => { RAW.config = s.val() || {}; render(); });
-  db.ref("blanchiment").on("value", s => { RAW.blanchiment = s.val() || {}; render(); });
-})();
+function renderContent() {
+  document.getElementById("content").innerHTML = `
+    <h1>Blanchiment</h1>
+    <div class="sigil-rule"></div>
 
-function render(){
-  const content = document.getElementById("page-content");
-  const taux = RAW.config.blanchiment_taux ?? 0.7;
-  const list = Object.entries(RAW.blanchiment||{}).sort((a,b) => (b[1].date||"").localeCompare(a[1].date||""));
-
-  content.innerHTML = `
-    <div class="page-header"><div><h1>Blanchiment</h1><div class="sub">Taux actuel : ${Math.round(taux*100)}%</div></div></div>
-
-    <div class="cards-row">
-      <div class="card"><div class="label">Argent sale</div><div class="value danger">${(RAW.argent.sale||0).toLocaleString()} $</div></div>
-      <div class="card"><div class="label">Argent propre</div><div class="value succes">${(RAW.argent.propre||0).toLocaleString()} $</div></div>
-    </div>
-
-    <div class="panel">
-      <h2>Nouveau blanchiment</h2>
-      <div class="form-row">
-        <div><label>Montant sale à blanchir</label><input type="number" id="blMontant"></div>
+    <div class="panel mt16">
+      <div class="panel-head"><h2>Nouveau blanchiment — taux actuel : <span id="tauxLabel">35</span>% de frais</h2></div>
+      <div class="row">
+        <div><label class="l">Description</label><input type="text" id="bDesc" placeholder="Ex: Blanchiment via le pressing"></div>
+        <div><label class="l">Montant sale ($)</label><input type="number" id="bMontant" oninput="calcApercu()"></div>
+        <div style="display:flex;flex-direction:column;"><label class="l">Récupéré (propre)</label><div class="stat-num gold" id="apercuPropre" style="font-size:20px;">0 $</div></div>
       </div>
-      <div class="sub" id="blApercu" style="margin-bottom:12px;"></div>
-      <button class="btn-or" onclick="blanchir()">Blanchir</button>
+      <button class="btn btn-primary mt16" onclick="blanchir()">Lancer le blanchiment</button>
+      <p class="small muted mt8">Le taux de frais se configure dans Admin → Config.</p>
     </div>
 
     <div class="panel">
-      <h2>Historique</h2>
-      ${list.length ? `
-      <table>
-        <thead><tr><th>Date</th><th>Sale investi</th><th>Propre reçu</th></tr></thead>
-        <tbody>
-          ${list.map(([id,b]) => `
-            <tr><td>${b.date ? new Date(b.date).toLocaleString('fr-FR') : ""}</td><td>${(b.sale||0).toLocaleString()} $</td><td>${(b.propre||0).toLocaleString()} $</td></tr>
-          `).join("")}
-        </tbody>
-      </table>` : `<div class="empty-state">Aucun blanchiment.</div>`}
+      <div class="panel-head"><h2>Historique</h2></div>
+      <table><thead><tr><th>Date</th><th>Description</th><th>Sale</th><th>Frais</th><th>Propre récupéré</th><th>Par</th>${SESSION.role === 'admin' ? '<th></th>' : ''}</tr></thead>
+        <tbody id="tblHisto"><tr class="empty-row"><td colspan="${SESSION.role === 'admin' ? 7 : 6}">Chargement…</td></tr></tbody></table>
     </div>
   `;
-
-  document.getElementById("blMontant").addEventListener("input", majApercu);
 }
 
-function majApercu(){
-  const taux = RAW.config.blanchiment_taux ?? 0.7;
-  const montant = parseFloat(document.getElementById("blMontant").value) || 0;
-  document.getElementById("blApercu").textContent = `= ${(montant*taux).toLocaleString()} $ propre`;
+function calcApercu() {
+  const montant = Number(document.getElementById("bMontant").value) || 0;
+  const propre = Math.round(montant * (1 - TAUX / 100));
+  document.getElementById("apercuPropre").textContent = formatMoney(propre);
 }
 
-function blanchir(){
-  const taux = RAW.config.blanchiment_taux ?? 0.7;
-  const montant = parseFloat(document.getElementById("blMontant").value) || 0;
-  if (!montant || montant > (RAW.argent.sale||0)) { alert("Montant invalide ou insuffisant."); return; }
-  const propre = montant * taux;
+async function blanchir() {
+  const desc = document.getElementById("bDesc").value.trim() || "Blanchiment";
+  const montant = Number(document.getElementById("bMontant").value) || 0;
+  if (montant <= 0) { toast("Montant invalide.", true); return; }
+  const frais = Math.round(montant * TAUX / 100);
+  const propre = montant - frais;
+  const date = todayISO();
+  const id = uid();
 
-  db.ref("argent/sale").transaction(v => (v||0)-montant);
-  db.ref("argent/propre").transaction(v => (v||0)+propre);
-  db.ref("blanchiment").push({ sale: montant, propre, date: new Date().toISOString(), membreId: MEMBRE.id });
+  await db.ref("blanchiments/" + id).set({ date, description: desc, montant_sale: montant, montant_propre: propre, frais, responsable: SESSION.prenom, createdAt: Date.now() });
+  await db.ref("argent/sale/" + id).set({ date, description: desc, type: "Sortie", montant, responsable: SESSION.prenom, createdAt: Date.now() });
+  await db.ref("argent/propre/" + id).set({ date, description: desc + " (blanchi)", type: "Entrée", montant: propre, responsable: SESSION.prenom, createdAt: Date.now() });
 
-  document.getElementById("blMontant").value = "";
+  toast("Blanchiment effectué : " + formatMoney(propre) + " récupérés.");
+  document.getElementById("bDesc").value = ""; document.getElementById("bMontant").value = ""; calcApercu();
 }
+
+async function supprimerBlanchiment(id) {
+  if (!confirm("Annuler ce blanchiment ? Les mouvements d'argent associés seront supprimés.")) return;
+  await db.ref("blanchiments/" + id).remove();
+  await db.ref("argent/sale/" + id).remove();
+  await db.ref("argent/propre/" + id).remove();
+  toast("Blanchiment annulé.");
+}
+
+let HISTO_BLANCHIMENTS = {};
+function renderHisto() {
+  const list = entries(HISTO_BLANCHIMENTS).map(([id, b]) => ({ id, ...b })).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const isAdmin = SESSION.role === "admin";
+  document.getElementById("tblHisto").innerHTML = list.length ? list.map(b => `
+    <tr><td>${b.date}</td><td>${b.description}</td><td>${formatMoney(b.montant_sale)}</td><td class="muted">${formatMoney(b.frais)}</td><td class="mono" style="color:var(--gold)">${formatMoney(b.montant_propre)}</td><td>${b.responsable}</td>
+    ${isAdmin ? `<td><span class="btn btn-sm btn-danger" onclick="supprimerBlanchiment('${b.id}')">Annuler</span></td>` : ""}
+    </tr>
+  `).join("") : `<tr class="empty-row"><td colspan="${isAdmin ? 7 : 6}">Aucun blanchiment</td></tr>`;
+}
+
+(async function () {
+  await authReady;
+  SESSION = await initShell("blanchiment", "Blanchiment");
+  if (!SESSION) return;
+  const snapCfg = await db.ref("config/blanchiment_taux").once("value");
+  TAUX = Number(snapCfg.val()) || 35;
+  renderContent();
+  document.getElementById("tauxLabel").textContent = TAUX;
+  db.ref("blanchiments").on("value", snap => { HISTO_BLANCHIMENTS = snap.val() || {}; renderHisto(); });
+  db.ref("config/blanchiment_taux").on("value", snap => {
+    TAUX = Number(snap.val()) || 35;
+    const lbl = document.getElementById("tauxLabel");
+    if (lbl) lbl.textContent = TAUX;
+    calcApercu();
+  });
+})();
 </script>
 </body>
 </html>

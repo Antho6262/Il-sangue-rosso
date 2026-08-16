@@ -1,5 +1,12 @@
-// ⚠️ Remplacer par la config de la NOUVELLE base Firebase créée pour Il Sangue Rosso
-// (Firebase Console → Paramètres du projet → Vos applications → Config)
+/* ============================================================
+   IL SANGUE ROSSO — firebase-config.js
+   Config Firebase + session + permissions.
+
+   ⚠️ A REMPLIR : créez votre propre projet Firebase (gratuit) sur
+   https://console.firebase.google.com puis collez sa config ci-dessous.
+   Realtime Database > Règles : démarrez en mode test, puis restreignez.
+   ============================================================ */
+
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB0VkhwfAshsXciEP2T5l64nqsbVGb8k8o",
   authDomain: "il-sangue-rosso.firebaseapp.com",
@@ -10,67 +17,120 @@ const FIREBASE_CONFIG = {
   appId: "1:348270636377:web:779cbe207f6aee4d7d3048"
 };
 
+const NOM_GROUPE = "Il Sangue Rosso";
+
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
-// Liste des pages disponibles (mêmes 13 pages que Volta, sans Armurerie/Objectifs/Sanctions)
+const authReady = new Promise(resolve => {
+  firebase.auth().onAuthStateChanged(user => {
+    if (user) resolve(user);
+    else firebase.auth().signInAnonymously().then(cred => resolve(cred.user));
+  });
+});
+
+/* ---------- liste des pages de l'app (utilisée par admin + permissions) ---------- */
 const PAGES_DISPO = [
-  { id: "dashboard",    nom: "Dashboard",     fichier: "dashboard.html" },
-  { id: "tracker",      nom: "Tracker",       fichier: "tracker.html" },
-  { id: "stock",        nom: "Stock",         fichier: "stock.html" },
-  { id: "transactions", nom: "Transactions",  fichier: "transactions.html" },
-  { id: "labo",         nom: "Labo",          fichier: "labo.html" },
-  { id: "four",         nom: "Four",          fichier: "four.html" },
-  { id: "stats",        nom: "Stats",         fichier: "stats.html" },
-  { id: "quotas",       nom: "Quotas",        fichier: "quotas.html" },
-  { id: "blanchiment",  nom: "Blanchiment",   fichier: "blanchiment.html" },
-  { id: "paye",         nom: "Paye",          fichier: "paye.html" },
-  { id: "taxes",        nom: "Taxes",         fichier: "taxes.html" },
-  { id: "admin",        nom: "Admin",         fichier: "admin.html" },
-  { id: "profil",       nom: "Profil",        fichier: "profil.html" }
+  { page: "dashboard",     label: "Dashboard" },
+  { page: "tracker",       label: "Tracker" },
+  { page: "stats",         label: "Stats" },
+  { page: "stock",         label: "Stock" },
+  { page: "quotas",        label: "Quotas" },
+  { page: "labo",          label: "Labo" },
+  { page: "four",          label: "Four" },
+  { page: "blanchiment",   label: "Blanchiment" },
+  { page: "paye",          label: "Paye" },
+  { page: "transactions",  label: "Transactions" },
+  { page: "taxes",         label: "Taxes" },
+  { page: "admin",         label: "Admin" },
+  { page: "profil",        label: "Profil" }
 ];
 
-// ---- SESSION ----
+/* ---------- SESSION ---------- */
 function getSession() {
-  try {
-    return JSON.parse(sessionStorage.getItem("isr_session") || "null");
-  } catch (e) { return null; }
+  try { return JSON.parse(localStorage.getItem("isr_session") || "null"); }
+  catch (e) { return null; }
 }
-
 function setSession(membre) {
-  sessionStorage.setItem("isr_session", JSON.stringify(membre));
+  localStorage.setItem("isr_session", JSON.stringify(membre));
 }
-
 function clearSession() {
-  sessionStorage.removeItem("isr_session");
+  localStorage.removeItem("isr_session");
 }
-
-// Résout une fois la session chargée (utilisé en tête de chaque page protégée)
-function authReady() {
-  return new Promise((resolve) => {
-    const s = getSession();
-    resolve(s);
-  });
+function logout() {
+  clearSession();
+  window.location.href = pathToRoot() + "index.html";
 }
-
-// Redirige vers le login si pas de session valide ; retourne le membre sinon
-async function requireSession() {
-  const s = await authReady();
-  if (!s || !s.id) {
-    window.location.href = isRootPage() ? "index.html" : "../index.html";
+/* calcule le chemin relatif vers la racine selon qu'on est dans /pages/ ou pas */
+function pathToRoot() {
+  return window.location.pathname.includes("/pages/") ? "../" : "";
+}
+/* à appeler en haut de chaque page protégée (sauf index/setup) */
+function requireSession() {
+  const s = getSession();
+  if (!s) {
+    window.location.href = pathToRoot() + "index.html";
     return null;
   }
   return s;
 }
 
-function isRootPage() {
-  return !window.location.pathname.includes("/pages/");
+/* ---------- PERMISSIONS ----------
+   Stockées dans Firebase sous permissions/{grade}/{page} = true/false
+   Le Fondateur (role === 'admin') a toujours accès à tout, même si rien
+   n'est configuré — pour ne jamais se retrouver bloqué hors de l'admin. */
+let _permsCache = null;
+async function loadPermissions() {
+  if (_permsCache) return _permsCache;
+  const snap = await db.ref("permissions").once("value");
+  _permsCache = snap.val() || {};
+  return _permsCache;
 }
-
-// Vérifie qu'un membre (via ses permissions/grade) peut accéder à une page
-function canAccess(membre, pageId) {
+async function canAccess(membre, page) {
   if (!membre) return false;
   if (membre.role === "admin") return true;
-  const perms = membre.permissions || [];
-  return perms.includes(pageId);
+  const perms = await loadPermissions();
+  const gradePerms = perms[membre.grade] || {};
+  return gradePerms[page] === true;
+}
+
+/* ---------- UTILITAIRES ---------- */
+function formatMoney(n) {
+  n = Number(n) || 0;
+  return n.toLocaleString("fr-FR") + " $";
+}
+function formatDate(d) {
+  if (!d) return "-";
+  try {
+    const dt = new Date(d);
+    return dt.toLocaleDateString("fr-FR");
+  } catch (e) { return d; }
+}
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+function nowHHMM() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+/* IMPORTANT : ne jamais utiliser snap.forEach seul (bug si pas d'index) —
+   toujours repasser par Object.entries(snap.val() || {}) */
+function entries(val) {
+  return Object.entries(val || {});
+}
+function toast(msg, isErr) {
+  let wrap = document.querySelector(".toast-wrap");
+  if (!wrap) {
+    wrap = document.createElement("div");
+    wrap.className = "toast-wrap";
+    document.body.appendChild(wrap);
+  }
+  const el = document.createElement("div");
+  el.className = "toast" + (isErr ? " err" : "");
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
 }

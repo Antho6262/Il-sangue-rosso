@@ -1,83 +1,124 @@
-// 5 pages toujours visibles + sous-menu "Plus" repliable
+/* ============================================================
+   IL SANGUE ROSSO — app.js
+   Sidebar / topbar communs + items de navigation.
+   ============================================================ */
+
 const NAV_ITEMS = [
-  { id: "dashboard",    nom: "Dashboard",    icon: "🏠", fichier: "dashboard.html" },
-  { id: "tracker",      nom: "Tracker",      icon: "🎯", fichier: "tracker.html" },
-  { id: "stock",        nom: "Stock",        icon: "📦", fichier: "stock.html" },
-  { id: "transactions", nom: "Transactions", icon: "💰", fichier: "transactions.html" },
-  { id: "labo",         nom: "Labo",         icon: "⚗️", fichier: "labo.html" }
+  { page: "dashboard",    icon: "🏠", label: "Dashboard",    file: "dashboard.html" },
+  { page: "tracker",      icon: "📋", label: "Tracker",      file: "tracker.html" },
+  { page: "stock",        icon: "📦", label: "Stock",        file: "stock.html" },
+  { page: "transactions", icon: "🔁", label: "Transactions", file: "transactions.html" },
+  { page: "labo",         icon: "🧪", label: "Labo",         file: "labo.html" },
+  { page: "four",         icon: "🔥", label: "Four",         file: "four.html" },
+  { page: "stats",        icon: "📊", label: "Stats",        file: "stats.html" },
+  { page: "quotas",       icon: "🎯", label: "Quotas",       file: "quotas.html" },
+  { page: "blanchiment",  icon: "💵", label: "Blanchiment",  file: "blanchiment.html" },
+  { page: "paye",         icon: "💰", label: "Paye",         file: "paye.html" },
+  { page: "taxes",        icon: "🧾", label: "Taxes",        file: "taxes.html" },
+  { page: "admin",        icon: "⚙️", label: "Admin",        file: "admin.html" },
+  { page: "profil",       icon: "👤", label: "Profil",       file: "profil.html" }
 ];
 
-const NAV_SUBMENU = [
-  { id: "four",        nom: "Four",         icon: "🔥", fichier: "four.html" },
-  { id: "stats",       nom: "Stats",        icon: "📊", fichier: "stats.html" },
-  { id: "quotas",      nom: "Quotas",       icon: "✅", fichier: "quotas.html" },
-  { id: "blanchiment", nom: "Blanchiment",  icon: "🧺", fichier: "blanchiment.html" },
-  { id: "paye",        nom: "Paye",         icon: "💵", fichier: "paye.html" },
-  { id: "taxes",       nom: "Taxes",        icon: "🏛️", fichier: "taxes.html" },
-  { id: "admin",       nom: "Admin",        icon: "🛠️", fichier: "admin.html" },
-  { id: "profil",      nom: "Profil",       icon: "👤", fichier: "profil.html" }
-];
+/* Les 5 premières pages restent toujours visibles dans la sidebar ;
+   tout le reste est regroupé dans un sous-menu repliable "Plus". */
+const NAV_PRIMARY_COUNT = 5;
 
-function toggleNavSubmenu() {
-  const sub = document.getElementById("navSubmenu");
-  const arrow = document.getElementById("navSubmenuArrow");
-  const open = sub.classList.toggle("open");
-  if (arrow) arrow.textContent = open ? "▾" : "▸";
+/* Ouvre/ferme le sous-menu "Plus" dans la sidebar. */
+function toggleNavSubmenu(toggleEl) {
+  const submenu = toggleEl.nextElementSibling;
+  const chevron = toggleEl.querySelector(".nav-chevron");
+  const ouvert = submenu.style.display !== "none";
+  submenu.style.display = ouvert ? "none" : "block";
+  chevron.textContent = ouvert ? "▸" : "▾";
 }
 
-function toggleMobileSidebar() {
-  document.querySelector(".sidebar").classList.toggle("open");
-}
+/* Construit le shell (sidebar + topbar) dans #shell, protège la page,
+   et renvoie la session du membre connecté (ou redirige vers /index.html). */
+async function initShell(activePage, pageTitle) {
+  const session = requireSession();
+  if (!session) return null;
 
-// Construit la sidebar, marque la page active, ouvre le sous-menu si besoin
-function initShell(activePageId, membre) {
-  const shell = document.getElementById("app-shell");
-  const isRoot = isRootPage();
-  const base = isRoot ? "pages/" : "";
-  const homeLink = isRoot ? "#" : "../index.html";
-  const logoPath = isRoot ? "img/logo.png" : "../img/logo.png";
+  let allowed;
+  try {
+    allowed = await canAccess(session, activePage);
+  } catch (e) {
+    allowed = false;
+  }
+  if (!allowed) {
+    document.body.innerHTML =
+      '<div class="login-wrap"><div class="login-card"><div class="login-brand">ACCÈS REFUSÉ</div>' +
+      '<p class="muted" style="text-align:center;margin-top:10px;">Ton compte est désactivé ou n\'a pas accès à cette page.</p>' +
+      '<a href="' + pathToRoot() + 'index.html" class="btn btn-primary" style="margin-top:16px;display:block;text-align:center;" onclick="clearSession()">Retour à la connexion</a></div></div>';
+    return null;
+  }
 
-  const submenuHasActive = NAV_SUBMENU.some(i => i.id === activePageId);
+  const root = pathToRoot();
+  const primaryItems = NAV_ITEMS.slice(0, NAV_PRIMARY_COUNT);
+  const restItems = NAV_ITEMS.slice(NAV_PRIMARY_COUNT);
 
-  const navHtml = NAV_ITEMS.map(item => `
-    <div class="nav-item ${item.id === activePageId ? "active" : ""}" onclick="location.href='${base}${item.fichier}'">
-      <span>${item.icon}</span><span>${item.nom}</span>
-    </div>`).join("");
+  let navHtml = "";
+  for (const item of primaryItems) {
+    const ok = await canAccess(session, item.page);
+    if (!ok) continue;
+    const active = item.page === activePage ? " active" : "";
+    navHtml += `<a class="nav-item${active}" href="${root}pages/${item.file}">
+        <span class="ic">${item.icon}</span><span class="lbl">${item.label}</span>
+      </a>`;
+  }
 
-  const submenuHtml = NAV_SUBMENU.map(item => `
-    <div class="nav-item ${item.id === activePageId ? "active" : ""}" onclick="location.href='${base}${item.fichier}'">
-      <span>${item.icon}</span><span>${item.nom}</span>
-    </div>`).join("");
+  let restHtml = "";
+  let restContainsActive = false;
+  for (const item of restItems) {
+    const ok = await canAccess(session, item.page);
+    if (!ok) continue;
+    const active = item.page === activePage ? " active" : "";
+    if (active) restContainsActive = true;
+    restHtml += `<a class="nav-item${active}" href="${root}pages/${item.file}">
+        <span class="ic">${item.icon}</span><span class="lbl">${item.label}</span>
+      </a>`;
+  }
 
-  shell.innerHTML = `
-    <button class="mobile-toggle" onclick="toggleMobileSidebar()">☰ Menu</button>
+  if (restHtml) {
+    navHtml += `
+      <div class="nav-item nav-toggle" onclick="toggleNavSubmenu(this)">
+        <span class="ic">☰</span><span class="lbl">Plus</span><span class="nav-chevron">${restContainsActive ? "▾" : "▸"}</span>
+      </div>
+      <div class="nav-submenu" style="display:${restContainsActive ? "block" : "none"};">${restHtml}</div>
+    `;
+  }
+
+  const shellHtml = `
     <div class="shell">
       <aside class="sidebar">
-        <div class="brand">
-          <img src="${logoPath}" alt="logo">
-          <span>IL SANGUE ROSSO</span>
+        <div class="sidebar-head">
+          <img src="${root}img/logo.png" alt="Il Sangue Rosso" class="sidebar-coin">
+          <div class="sidebar-logo"><span class="full">IL SANGUE ROSSO</span></div>
         </div>
-        <nav>
-          ${navHtml}
-          <div class="nav-submenu-toggle" onclick="toggleNavSubmenu()">
-            <span>☰ Plus</span><span id="navSubmenuArrow">${submenuHasActive ? "▾" : "▸"}</span>
-          </div>
-          <div class="nav-submenu ${submenuHasActive ? "open" : ""}" id="navSubmenu">
-            ${submenuHtml}
-          </div>
-        </nav>
-        <div class="nav-footer">
-          <div style="font-size:0.78rem;color:var(--gris);">${membre ? membre.prenom : ""}</div>
-          <div style="font-size:0.72rem;color:var(--or-clair);">${membre ? (membre.grade || "") : ""}</div>
-          <button class="btn-logout" onclick="logout()">Déconnexion</button>
+        <nav class="nav">${navHtml}</nav>
+        <div class="sidebar-foot">
+          <div class="who"><b>${session.prenom} ${session.nom || ""}</b><span class="grade">${session.grade || ""}</span></div>
+          <div id="rtStatus" class="small muted" style="margin:6px 0;">🔄 Connexion…</div>
+          <span class="logout-link" onclick="logout()">Se déconnecter</span>
         </div>
       </aside>
-      <main class="main" id="page-content"></main>
+      <div class="main">
+        <div class="topbar">
+          <div class="topbar-title">${pageTitle || ""}</div>
+          <div class="topbar-brand"><span class="coin">🪙</span> IL SANGUE ROSSO</div>
+        </div>
+        <main class="content fade-in" id="content"></main>
+      </div>
     </div>
   `;
-}
+  document.getElementById("shell").outerHTML = shellHtml;
 
-function logout() {
-  clearSession();
-  window.location.href = isRootPage() ? "index.html" : "../index.html";
+  // Indicateur temps réel : reflète l'état réel de la connexion Firebase
+  // (se met à jour tout seul si la connexion tombe ou revient).
+  db.ref(".info/connected").on("value", snap => {
+    const el = document.getElementById("rtStatus");
+    if (!el) return;
+    el.textContent = snap.val() === true ? "🟢 Temps réel actif" : "🔴 Connexion perdue…";
+  });
+
+  return session;
 }
