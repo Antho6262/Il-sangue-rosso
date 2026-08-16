@@ -661,6 +661,13 @@ async function tabStock(body) {
   const snap = await db.ref("stock").once("value");
   const cats = entries(snap.val()).map(([id, c]) => ({ id, ...c }));
   body.innerHTML = `
+    <div class="panel" style="border-color:rgba(212,175,55,.3);">
+      <div class="panel-head"><h2>Import rapide — recette Labo Cannabis</h2></div>
+      <p class="small muted">Crée la catégorie Labo (si absente) avec 4 ingrédients (Eau, Fertilisant, Graine, Pot) et le cycle en 3 étapes :
+      <b>Plantation</b> (54 Pot + 54 Graine, une fois), <b>Arrosage</b> (54 Eau + 54 Fertilisant, à répéter 5-6 fois), puis
+      <b>Récolte</b> (pas de recette fixe : tu saisis toi-même la quantité de branches obtenue à la fin du cycle).</p>
+      <button class="btn btn-gold mt8" onclick="importerRecetteLaboCannabis()">Importer la recette Cannabis</button>
+    </div>
     <div class="panel">
       <div class="panel-head"><h2>Nouvelle catégorie</h2></div>
       <div class="row"><input type="text" id="catEmoji" placeholder="Emoji (ex: 💊)" style="max-width:90px;">
@@ -747,6 +754,46 @@ async function ajouterProduitLabo(catId) {
   await db.ref("stock/" + catId + "/produits/" + uid()).set(data);
   RECETTE_LABO_EN_COURS = [];
   toast("Produit Labo enregistré.");
+  loadTab("stock");
+}
+async function importerRecetteLaboCannabis() {
+  if (!confirm("Créer/compléter la catégorie Labo avec le cycle Cannabis (Plantation → Arrosage → Récolte) ?")) return;
+
+  const snap = await db.ref("stock/labo_cat").once("value");
+  const existant = (snap.val() || {}).produits || {};
+
+  const ingredients = { eau: "Eau", fertilisant: "Fertilisant", graine: "Graine", pot: "Pot" };
+  const updates = {};
+  for (const [id, nom] of Object.entries(ingredients)) {
+    if (!existant[id]) updates[id] = { nom, prix: 0, stock: 0, seuil: 0, recipe: [] };
+  }
+  // Étape 1 : Plantation — consomme 54 Pot + 54 Graine, une fois par cycle
+  if (!existant.plantation_cannabis) {
+    updates.plantation_cannabis = {
+      nom: "Plantation Cannabis", prix: 0, stock: 0, seuil: 0,
+      recipe: [{ ingredientId: "pot", qty: 54 }, { ingredientId: "graine", qty: 54 }]
+    };
+  }
+  // Étape 2 : Arrosage — consomme 54 Eau + 54 Fertilisant, à répéter 5-6 fois par cycle
+  if (!existant.arrosage_cannabis) {
+    updates.arrosage_cannabis = {
+      nom: "Arrosage Cannabis", prix: 0, stock: 0, seuil: 0,
+      recipe: [{ ingredientId: "eau", qty: 54 }, { ingredientId: "fertilisant", qty: 54 }]
+    };
+  }
+  // Étape 3 : Récolte — pas de recette fixe (quantité variable saisie à la main à chaque récolte)
+  if (!existant.recolte_branches_cannabis) {
+    updates.recolte_branches_cannabis = {
+      nom: "Récolte de Branches de Cannabis", prix: 0, stock: 0, seuil: 5,
+      recipe: []
+    };
+  }
+
+  await db.ref("stock/labo_cat").update({ nom: "Labo", emoji: "🧪" });
+  if (Object.keys(updates).length) await db.ref("stock/labo_cat/produits").update(updates);
+
+  toast("Cycle Cannabis importé : Plantation (54 Pot+54 Graine) → Arrosage (54 Eau+54 Fertilisant, à répéter) → Récolte (quantité libre).");
+  logAudit("Cycle Labo Cannabis importé", "");
   loadTab("stock");
 }
 async function creerCategorie() {
