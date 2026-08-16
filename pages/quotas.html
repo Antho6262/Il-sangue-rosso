@@ -16,7 +16,7 @@
 <script src="../js/app.js"></script>
 <script>
 let SESSION;
-let DATA = { semaines: {}, membres: {}, visi: {}, actionsDispo: {}, stock: {}, quotasCategorie: {}, actions: {} };
+let DATA = { semaines: {}, membres: {}, visi: {}, actionsDispo: {}, stock: {}, quotasCategorie: {}, quotasAction: {}, actions: {} };
 let ACTIVE_WEEK_ID = null, ACTIONS_REF = null;
 
 function renderContent() {
@@ -28,6 +28,7 @@ function renderContent() {
       <table><thead><tr><th>Membre</th><th>Quota / semaine</th><th>Réalisé</th><th>Progression</th></tr></thead>
         <tbody id="tblQuotas"><tr class="empty-row"><td colspan="4">Chargement…</td></tr></tbody></table>
     </div>
+    <div id="quotasActionWrap"></div>
     <div id="quotasProduitsWrap"></div>
   `;
 }
@@ -85,6 +86,28 @@ function renderDerived() {
 
   const wrap = document.getElementById("quotasProduitsWrap");
   const catIds = [...new Set(Object.values(DATA.actionsDispo).map(a => a.cat_variable).filter(Boolean))];
+
+  const wrapAction = document.getElementById("quotasActionWrap");
+  const actionsFixes = entries(DATA.actionsDispo).map(([id, a]) => ({ id, ...a })).filter(a => !a.cat_variable);
+  if (actionsFixes.length) {
+    wrapAction.innerHTML = actionsFixes.map(a => {
+      const actionsMembreAll = actions.filter(ac => ac.action_id === a.id && ac.resultat === "Réussite");
+      return `<div class="panel">
+        <div class="panel-head"><h2>🎯 Quota ${a.nom}</h2></div>
+        <table><thead><tr><th>Membre</th><th>Cible</th><th>Réalisé</th><th>Progression</th></tr></thead>
+          <tbody>${membres.map(m => {
+            const override = (DATA.quotasAction[m.id] || {})[a.id];
+            const quota = override !== undefined ? Number(override) : Number(a.quota_defaut) || 0;
+            const fait = actionsMembreAll.filter(ac => ac.membre_id === m.id).reduce((acc, ac) => acc + Number(ac.quantite || 0), 0);
+            const pct = quota > 0 ? Math.round(fait / quota * 100) : 0;
+            return `<tr><td>${m.prenom}</td><td>${quota}</td><td>${fait}</td><td>${barreHtml(pct)}</td></tr>`;
+          }).join("")}</tbody></table>
+      </div>`;
+    }).join("");
+  } else {
+    wrapAction.innerHTML = "";
+  }
+
   if (!catIds.length) { wrap.innerHTML = ""; return; }
 
   wrap.innerHTML = catIds.map(catId => {
@@ -124,6 +147,7 @@ function renderDerived() {
   db.ref("actions_dispo").on("value", snap => { DATA.actionsDispo = snap.val() || {}; renderDerived(); });
   db.ref("stock").on("value", snap => { DATA.stock = snap.val() || {}; renderDerived(); });
   db.ref("quotas_categorie").on("value", snap => { DATA.quotasCategorie = snap.val() || {}; renderDerived(); });
+  db.ref("quotas_action").on("value", snap => { DATA.quotasAction = snap.val() || {}; renderDerived(); });
 })();
 </script>
 </body>

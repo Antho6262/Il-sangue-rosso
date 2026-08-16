@@ -600,7 +600,7 @@ async function tabMembres(body) {
               <span class="btn btn-sm" title="Changer le mot de passe" onclick="changerPassMembre('${m.id}','${m.prenom}')">🔑</span>
               <span class="btn btn-sm" title="${m.role === 'admin' ? 'Retirer admin' : 'Passer admin'}" onclick="toggleAdmin('${m.id}', ${m.role !== 'admin'})">🛡️</span>
               <span class="btn btn-sm" title="${m.actif !== false ? 'Désactiver' : 'Activer'}" onclick="toggleActif('${m.id}', ${m.actif === false})">${m.actif !== false ? '⏸️' : '▶️'}</span>
-              ${m.role === 'admin' ? '' : `<span class="btn btn-sm btn-danger" title="Supprimer le membre" onclick="suppMembre('${m.id}')">🗑️</span>`}
+              <span class="btn btn-sm btn-danger" title="Supprimer le membre" onclick="suppMembre('${m.id}')">🗑️</span>
             </td>
           </tr>
         `).join("") : '<tr class="empty-row"><td colspan="7">Aucun membre</td></tr>'}</tbody></table>
@@ -810,6 +810,13 @@ async function tabActions(body) {
 
   body.innerHTML = `
     <div class="panel" style="border-color:rgba(212,175,55,.3);">
+      <div class="panel-head"><h2>Import rapide — actions Il Sangue Rosso</h2></div>
+      <p class="small muted">Crée en un clic les actions Supérette, Go Fast, Fleeca, Armurerie et Labo avec leurs quotas par défaut
+      (Supérette 10, Go Fast 8, Fleeca 6, Armurerie 8, Labo 15 — modifiables ensuite dans Admin → Quotas / Actions).</p>
+      <button class="btn btn-gold mt8" onclick="importerActionsISR()">Importer les actions Il Sangue Rosso</button>
+    </div>
+
+    <div class="panel" style="border-color:rgba(212,175,55,.3);">
       <div class="panel-head"><h2>Import rapide — actions classiques</h2></div>
       <p class="small muted">Crée en un clic les 5 actions classiques (Vente de Drogue, ATM, Cambu, Plantation, Vente de Branches)
       avec leurs catégories de stock associées. Tu pourras renommer/ajuster ensuite.</p>
@@ -837,7 +844,10 @@ async function tabActions(body) {
           <input type="checkbox" id="aProduction" style="width:auto;"> Cette action <b>ajoute</b> du stock au lieu d'en retirer (récolte/production, ex: Récolte de Champignons — au lieu d'une vente)
         </label>
       </div>
-      <p class="small muted mt8">Soit une recette fixe (toujours le même produit, ex: ATM → Boîtier de piratage), soit une catégorie « variable » où le membre choisit le produit exact en saisissant l'action (ex: Vente de Drogue → quelle drogue, ou Récolte de Champignons → quel champignon).</p>
+      <div class="row mt8">
+        <div><label class="l">Quota par défaut / semaine (optionnel)</label><input type="number" id="aQuotaDefaut" placeholder="ex: 10" value="0"></div>
+      </div>
+      <p class="small muted mt8">Soit une recette fixe (toujours le même produit, ex: ATM → Boîtier de piratage), soit une catégorie « variable » où le membre choisit le produit exact en saisissant l'action (ex: Vente de Drogue → quelle drogue, ou Récolte de Champignons → quel champignon). Le quota par défaut s'applique à chaque membre dans Admin → Quotas (modifiable individuellement ensuite).</p>
       <button class="btn btn-primary mt16" onclick="creerAction()">Créer l'action</button>
     </div>
     <div class="panel">
@@ -916,11 +926,34 @@ async function creerAction() {
     montant_propre: Number(document.getElementById("aPropre").value) || 0,
     recipe: RECIPE_LINES,
     cat_variable: document.getElementById("aCatVariable").value || null,
-    production: document.getElementById("aProduction").checked
+    production: document.getElementById("aProduction").checked,
+    quota_defaut: Number(document.getElementById("aQuotaDefaut").value) || 0
   });
   RECIPE_LINES = [];
   logAudit("Action créée", nom);
   toast("Action créée.");
+  loadTab("actions");
+}
+async function importerActionsISR() {
+  if (!confirm("Créer les actions Supérette (10), Go Fast (8), Fleeca (6), Armurerie (8) et Labo (15) avec leurs quotas par défaut ?")) return;
+  await db.ref("actions_dispo").update({
+    superette: { nom: "Supérette", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 10 },
+    gofast: { nom: "Go Fast", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 8 },
+    fleeca: { nom: "Fleeca", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 6 },
+    armurerie: { nom: "Armurerie", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 8 }
+  });
+  // Labo : quota traité par catégorie (bootstrap automatique par pages/labo.html), on pré-crée juste la cible
+  const snapActions = await db.ref("actions_dispo").once("value");
+  const actions = snapActions.val() || {};
+  const laboFound = Object.entries(actions).find(([, a]) => a.nom === "Labo");
+  if (!laboFound) {
+    await db.ref("stock/labo_cat").once("value").then(async snap => {
+      if (!snap.val()) await db.ref("stock/labo_cat").set({ nom: "Labo", emoji: "🧪", produits: {} });
+    });
+    await db.ref("actions_dispo/labo").set({ nom: "Labo", montant_sale: 0, montant_propre: 0, recipe: [], cat_variable: "labo_cat" });
+  }
+  toast("Actions importées. Va dans Admin → Quotas pour appliquer les cibles par défaut à chaque membre (bouton \"Appliquer les quotas par défaut\").");
+  logAudit("Actions Il Sangue Rosso importées", "superette, gofast, fleeca, armurerie, labo");
   loadTab("actions");
 }
 async function suppAction(id) { if (confirm("Supprimer cette action ?")) { await db.ref("actions_dispo/" + id).remove(); logAudit("Action supprimée", id); loadTab("actions"); } }
@@ -938,13 +971,14 @@ function barreAdmin(pct) {
 }
 async function tabQuotas(body) {
   const week = await getActiveWeekAdmin();
-  const [snapM, snapAc, snapAcDispo, snapS, snapQC, snapG] = await Promise.all([
+  const [snapM, snapAc, snapAcDispo, snapS, snapQC, snapG, snapQA] = await Promise.all([
     db.ref("membres").once("value"),
     week ? db.ref("actions/" + week.id).once("value") : Promise.resolve({ val: () => null }),
     db.ref("actions_dispo").once("value"),
     db.ref("stock").once("value"),
     db.ref("quotas_categorie").once("value"),
-    db.ref("visibilite_grades").once("value")
+    db.ref("visibilite_grades").once("value"),
+    db.ref("quotas_action").once("value")
   ]);
   const visi = snapG.val() || {};
   const gradesMasques = new Set(Object.keys(visi).filter(g => visi[g] && visi[g].quotas === false));
@@ -953,6 +987,7 @@ async function tabQuotas(body) {
   const actionsDispo = snapAcDispo.val() || {};
   const stock = snapS.val() || {};
   const quotasCategorie = snapQC.val() || {};
+  const RAW_QUOTAS_ACTION = snapQA.val() || {};
 
   body.innerHTML = `
     <div class="panel">
@@ -967,8 +1002,38 @@ async function tabQuotas(body) {
             <td>${fait}</td><td>${barreAdmin(pct)}</td></tr>`;
         }).join("") : '<tr class="empty-row"><td colspan="4">Aucun membre</td></tr>'}</tbody></table>
     </div>
+    <div id="quotasActionAdminWrap"></div>
     <div id="quotasProduitsAdminWrap"></div>
   `;
+
+  // Quota par action fixe (sans produit variable, ex: Supérette, Go Fast, Fleeca, Armurerie)
+  const actionsFixes = entries(actionsDispo).map(([id, a]) => ({ id, ...a })).filter(a => !a.cat_variable);
+  const wrapAction = document.getElementById("quotasActionAdminWrap");
+  if (actionsFixes.length) {
+    wrapAction.innerHTML = `
+      <div class="panel" style="border-color:rgba(212,175,55,.3);">
+        <p class="small muted">Applique la « Quota par défaut » définie sur chaque action (Admin → Actions) à tous les membres visibles ci-dessous, sans écraser les cibles déjà personnalisées à la main.</p>
+        <button class="btn btn-sm btn-gold" onclick="appliquerQuotasDefaut()">Appliquer les quotas par défaut</button>
+      </div>
+    ` + actionsFixes.map(a => {
+      const actionsMembreAll = actions.filter(ac => ac.action_id === a.id && ac.resultat === "Réussite");
+      return `<div class="panel">
+        <div class="panel-head"><h2>🎯 Quota ${a.nom}${a.quota_defaut ? ` <span class="small muted">(défaut : ${a.quota_defaut})</span>` : ""}</h2></div>
+        <table><thead><tr><th>Membre</th><th>Quota</th><th>Réalisé</th><th>Progression</th></tr></thead>
+          <tbody>${membres.map(m => {
+            const override = (RAW_QUOTAS_ACTION[m.id] || {})[a.id];
+            const quota = override !== undefined ? Number(override) : Number(a.quota_defaut) || 0;
+            const fait = actionsMembreAll.filter(ac => ac.membre_id === m.id).reduce((acc, ac) => acc + Number(ac.quantite || 0), 0);
+            const pct = quota > 0 ? Math.round(fait / quota * 100) : 0;
+            return `<tr><td>${m.prenom}</td>
+              <td><input type="number" value="${quota}" style="max-width:90px" onchange="majQuotaActionAdmin('${m.id}','${a.id}', this.value)"></td>
+              <td>${fait}</td><td>${barreAdmin(pct)}</td></tr>`;
+          }).join("")}</tbody></table>
+      </div>`;
+    }).join("");
+  } else {
+    wrapAction.innerHTML = "";
+  }
 
   // une seule cible par catégorie "produit variable" (ex: Drogue), peu importe le produit exact vendu
   const catIds = [...new Set(Object.values(actionsDispo).map(a => a.cat_variable).filter(Boolean))];
@@ -999,6 +1064,26 @@ async function tabQuotas(body) {
 async function majQuotaAdmin(id, val) {
   await db.ref("membres/" + id + "/quota").set(Number(val) || 0);
   toast("Quota mis à jour.");
+}
+async function majQuotaActionAdmin(membreId, actionId, val) {
+  await db.ref(`quotas_action/${membreId}/${actionId}`).set(Number(val) || 0);
+  toast("Quota mis à jour.");
+}
+async function appliquerQuotasDefaut() {
+  const [snapM, snapA] = await Promise.all([db.ref("membres").once("value"), db.ref("actions_dispo").once("value")]);
+  const membres = entries(snapM.val()).filter(([, m]) => m.actif !== false);
+  const actionsFixes = entries(snapA.val()).filter(([, a]) => !a.cat_variable && a.quota_defaut);
+  if (!actionsFixes.length) { toast("Aucune action avec quota par défaut.", true); return; }
+  const updates = {};
+  for (const [mid] of membres) {
+    for (const [aid, a] of actionsFixes) {
+      updates[`quotas_action/${mid}/${aid}`] = Number(a.quota_defaut) || 0;
+    }
+  }
+  await db.ref().update(updates);
+  toast("Quotas par défaut appliqués à tous les membres.");
+  logAudit("Quotas par défaut appliqués", "");
+  loadTab("quotas");
 }
 async function majQuotaCategorieAdmin(membreId, catId, val) {
   await db.ref(`quotas_categorie/${membreId}/${catId}`).set(Number(val) || 0);
