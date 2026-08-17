@@ -31,7 +31,7 @@
       <button class="btn btn-gold" style="width:100%;" onclick="envoyerDemandeOubli()">Envoyer la demande</button>
       <div class="small" id="oublieMsg" style="margin-top:6px;"></div>
     </div>
-    <div class="login-foot">Première installation ? <a href="setup.html" style="color:var(--gold)">Initialiser le site</a></div>
+    <div class="login-foot" id="setupLink" style="display:none;">Première installation ? <a href="setup.html" style="color:var(--gold)">Initialiser le site</a></div>
   </div>
 </div>
 
@@ -58,6 +58,7 @@ async function chargerMembres() {
     });
     if (Object.keys(data).length === 0) {
       sel.innerHTML = '<option value="">Aucun membre — lancez l\'initialisation</option>';
+      document.getElementById("setupLink").style.display = "block";
     }
   } catch (e) {
     sel.innerHTML = '<option value="">Erreur de connexion Firebase</option>';
