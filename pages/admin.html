@@ -260,67 +260,9 @@ async function envoyerWebhookImage(webhook, blob, filename) {
   await fetch(webhook, { method: "POST", body: form });
 }
 
-/* Dates ancrées Europe/Paris (identique à la logique du bot Discord). */
-function getParisParts(ts) {
-  const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-  });
-  const parts = fmt.formatToParts(new Date(ts));
-  const get = (t) => Number(parts.find((p) => p.type === t).value);
-  return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour") === 24 ? 0 : get("hour"), minute: get("minute"), second: get("second") };
-}
-function ajouterJoursCivils(y, m, d, jours) {
-  const anchor = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
-  anchor.setUTCDate(anchor.getUTCDate() + jours);
-  return { year: anchor.getUTCFullYear(), month: anchor.getUTCMonth() + 1, day: anchor.getUTCDate() };
-}
-function parisWallToUTC(y, m, d, h, mi, s) {
-  let guess = Date.UTC(y, m - 1, d, h, mi, s || 0);
-  for (let i = 0; i < 2; i++) {
-    const p = getParisParts(guess);
-    const guessAsIfLocal = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-    guess += Date.UTC(y, m - 1, d, h, mi, s || 0) - guessAsIfLocal;
-  }
-  return guess;
-}
-function fmtJJMM(ts) {
-  const p = getParisParts(ts);
-  return String(p.day).padStart(2, "0") + "/" + String(p.month).padStart(2, "0");
-}
-function nomAutoSemaine(debut, fin) { return "Semaine du " + fmtJJMM(debut) + " au " + fmtJJMM(fin); }
-function prochainesBornes(derniere) {
-  if (!derniere || !derniere.fin) {
-    // Pas de semaine précédente : ancre sur "maintenant" (dimanche 19h le plus récent).
-    const now = Date.now();
-    const p = getParisParts(now);
-    const wd = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", weekday: "short" }).format(new Date(now));
-    const weekday = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
-    let dimRef = ajouterJoursCivils(p.year, p.month, p.day, -weekday);
-    let debut = parisWallToUTC(dimRef.year, dimRef.month, dimRef.day, 19, 0, 0);
-    if (debut > now) { dimRef = ajouterJoursCivils(dimRef.year, dimRef.month, dimRef.day, -7); debut = parisWallToUTC(dimRef.year, dimRef.month, dimRef.day, 19, 0, 0); }
-    const dimSuivant = ajouterJoursCivils(dimRef.year, dimRef.month, dimRef.day, 7);
-    const fin = parisWallToUTC(dimSuivant.year, dimSuivant.month, dimSuivant.day, 19, 0, 0);
-    return { debut, fin, verrouAt: fin };
-  }
-  const debut = derniere.fin;
-  const p = getParisParts(debut);
-  const dimSuivant = ajouterJoursCivils(p.year, p.month, p.day, 7);
-  const fin = parisWallToUTC(dimSuivant.year, dimSuivant.month, dimSuivant.day, 19, 0, 0);
-  return { debut, fin, verrouAt: fin };
-}
-/* Ouvre la semaine suivante après un blocage manuel, avec protection anti-doublon
-   (même mécanisme d'index que le bot Discord). */
-async function creerSemaineSuivante(derniere) {
-  const bounds = prochainesBornes(derniere);
-  const idxRef = db.ref("semaine_index/" + bounds.debut);
-  const existe = await idxRef.once("value");
-  if (existe.exists()) { console.log("Semaine suivante déjà créée par ailleurs."); return; }
-  const id = uid();
-  const nom = nomAutoSemaine(bounds.debut, bounds.fin);
-  await idxRef.set(id);
-  await db.ref("semaines/" + id).set({ nom, bloquee: false, createdAt: Date.now(), debut: bounds.debut, fin: bounds.fin, verrouAt: bounds.verrouAt });
-}
+/* getParisParts / ajouterJoursCivils / parisWallToUTC / fmtJJMM / nomAutoSemaine /
+   prochainesBornes / creerSemaineSuivante ont été déplacées dans js/app.js
+   (partagées avec ensureActiveWeek, qui tourne sur toutes les pages). */
 /* Stats/badges optionnels : best-effort, ne doit jamais faire planter le blocage de semaine. */
 async function majStatsEtBadges(weekId) {
   try {

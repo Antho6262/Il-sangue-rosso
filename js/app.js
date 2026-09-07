@@ -32,11 +32,171 @@ function toggleNavSubmenu(toggleEl) {
   chevron.textContent = ouvert ? "▸" : "▾";
 }
 
+/* ============================================================
+   SEMAINES — dates ancrées Europe/Paris (dimanche 19h → dimanche 19h).
+   Utilisées par ensureActiveWeek() ci-dessous et par Admin → Semaines.
+   ============================================================ */
+function getParisParts(ts) {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  });
+  const parts = fmt.formatToParts(new Date(ts));
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour") === 24 ? 0 : get("hour"), minute: get("minute"), second: get("second") };
+}
+function ajouterJoursCivils(y, m, d, jours) {
+  const anchor = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  anchor.setUTCDate(anchor.getUTCDate() + jours);
+  return { year: anchor.getUTCFullYear(), month: anchor.getUTCMonth() + 1, day: anchor.getUTCDate() };
+}
+function parisWallToUTC(y, m, d, h, mi, s) {
+  let guess = Date.UTC(y, m - 1, d, h, mi, s || 0);
+  for (let i = 0; i < 2; i++) {
+    const p = getParisParts(guess);
+    const guessAsIfLocal = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+    guess += Date.UTC(y, m - 1, d, h, mi, s || 0) - guessAsIfLocal;
+  }
+  return guess;
+}
+function fmtJJMM(ts) {
+  const p = getParisParts(ts);
+  return String(p.day).padStart(2, "0") + "/" + String(p.month).padStart(2, "0");
+}
+function nomAutoSemaine(debut, fin) { return "Semaine du " + fmtJJMM(debut) + " au " + fmtJJMM(fin); }
+function prochainesBornes(derniere) {
+  if (!derniere || !derniere.fin) {
+    // Pas de semaine précédente : ancre sur "maintenant" (dimanche 19h le plus récent).
+    const now = Date.now();
+    const p = getParisParts(now);
+    const wd = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", weekday: "short" }).format(new Date(now));
+    const weekday = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
+    let dimRef = ajouterJoursCivils(p.year, p.month, p.day, -weekday);
+    let debut = parisWallToUTC(dimRef.year, dimRef.month, dimRef.day, 19, 0, 0);
+    if (debut > now) { dimRef = ajouterJoursCivils(dimRef.year, dimRef.month, dimRef.day, -7); debut = parisWallToUTC(dimRef.year, dimRef.month, dimRef.day, 19, 0, 0); }
+    const dimSuivant = ajouterJoursCivils(dimRef.year, dimRef.month, dimRef.day, 7);
+    const fin = parisWallToUTC(dimSuivant.year, dimSuivant.month, dimSuivant.day, 19, 0, 0);
+    return { debut, fin, verrouAt: fin };
+  }
+  const debut = derniere.fin;
+  const p = getParisParts(debut);
+  const dimSuivant = ajouterJoursCivils(p.year, p.month, p.day, 7);
+  const fin = parisWallToUTC(dimSuivant.year, dimSuivant.month, dimSuivant.day, 19, 0, 0);
+  return { debut, fin, verrouAt: fin };
+}
+/* Ouvre la semaine suivante, enchaînée après la dernière. Protection anti-doublon
+   via semaine_index/{debut} (utile si plusieurs membres déclenchent la rotation
+   en même temps). */
+async function creerSemaineSuivante(derniere) {
+  const bounds = prochainesBornes(derniere);
+  const idxRef = db.ref("semaine_index/" + bounds.debut);
+  const existe = await idxRef.once("value");
+  if (existe.exists()) { console.log("Semaine suivante déjà créée par ailleurs."); return; }
+  const id = uid();
+  const nom = nomAutoSemaine(bounds.debut, bounds.fin);
+  await idxRef.set(id);
+  await db.ref("semaines/" + id).set({ nom, bloquee: false, createdAt: Date.now(), debut: bounds.debut, fin: bounds.fin, verrouAt: bounds.verrouAt });
+}
+
+/* ============================================================
+   SEMAINES — vérification / clôture / rotation automatique.
+   Remplace le workflow GitHub Actions (peu fiable : les cron schedules
+   de GitHub sont retardés de plusieurs heures sur les dépôts peu actifs).
+   Appelée à CHAQUE chargement de page (voir initShell ci-dessous) :
+   c'est donc une connexion de membre, et non un horaire fixe, qui
+   déclenche la clôture — beaucoup plus fiable.
+   Une transaction Firebase sur la semaine elle-même évite qu'un
+   double blocage/résumé/webhook se produise si plusieurs membres
+   se connectent au même moment.
+   ============================================================ */
+async function ensureActiveWeek() {
+  const now = Date.now();
+  const allSnap = await db.ref("semaines").once("value");
+  const all = entries(allSnap.val()).map(([id, s]) => ({ id, ...s }));
+  const active = all.find(s => s.bloquee !== true);
+
+  if (!active) {
+    // Filet de sécurité : aucune semaine du tout (première installation) → on en crée une.
+    await creerSemaineSuivante(null);
+    return;
+  }
+
+  if (!active.verrouAt || active.verrouAt > now) return; // semaine toujours valide, rien à faire
+
+  // Transaction : ne verrouille que si la semaine est toujours active — évite
+  // une double clôture si un autre membre se connecte au même instant.
+  const result = await db.ref("semaines/" + active.id).transaction(current => {
+    if (!current || current.bloquee === true) return current;
+    return { ...current, bloquee: true, closedAt: now };
+  });
+  if (!result.committed || !result.snapshot.val() || result.snapshot.val().closedAt !== now) return; // un autre membre s'en charge déjà
+
+  // C'est nous qui avons remporté la clôture : résumé + webhook + semaine suivante.
+  try {
+    await genererEtEnvoyerResumeSemaine(active.id, active.nom);
+  } catch (e) {
+    console.error("Résumé/webhook de semaine KO :", e);
+  }
+  await creerSemaineSuivante(active);
+}
+
+/* Construit le résumé texte de la semaine clôturée, l'enregistre sur
+   semaines/{id}/resume (repris par Admin → Semaines), et l'envoie sur
+   Discord si un webhook est configuré dans Admin → Config. */
+async function genererEtEnvoyerResumeSemaine(id, nom) {
+  const snap = await db.ref("actions/" + id).once("value");
+  const actions = entries(snap.val()).map(([, a]) => a);
+  const gainsSale = actions.reduce((acc, a) => acc + Number(a.argent_sale || 0), 0);
+  const gainsPropre = actions.reduce((acc, a) => acc + Number(a.argent_propre || 0), 0);
+  const reussites = actions.filter(a => a.resultat === "Réussite").length;
+  const echecs = actions.filter(a => a.resultat === "Échec").length;
+  const parMembre = {};
+  actions.forEach(a => { parMembre[a.prenom_membre] = (parMembre[a.prenom_membre] || 0) + 1; });
+  const classement = Object.entries(parMembre).sort((a, b) => b[1] - a[1])
+    .map(([p, n], i) => `${i + 1}. ${p} — ${n} action(s)`).join("\n");
+
+  const texte = `📋 RÉSUMÉ — ${nom} — Il Sangue Rosso\n` +
+    `Actions : ${actions.length} (✅ ${reussites} / ❌ ${echecs})\n` +
+    `Gains sale : ${formatMoney(gainsSale)}\n` +
+    `Gains propre : ${formatMoney(gainsPropre)}\n\n` +
+    `Classement :\n${classement || "—"}`;
+
+  await db.ref("semaines/" + id).update({ resume: texte });
+
+  const cfgSnap = await db.ref("config/discord_webhook_semaine").once("value");
+  const webhook = cfgSnap.val();
+  if (!webhook) return;
+  try {
+    await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        embeds: [{
+          title: `📋 RÉSUMÉ — ${nom}`,
+          color: 0x6b7280,
+          footer: { text: "IL SANGUE ROSSO — Famiglia · Onore · Lealtà" },
+          timestamp: new Date().toISOString(),
+          fields: [
+            { name: "Actions", value: `${actions.length} (✅ ${reussites} / ❌ ${echecs})`, inline: true },
+            { name: "Gains sale", value: formatMoney(gainsSale), inline: true },
+            { name: "Gains propre", value: formatMoney(gainsPropre), inline: true },
+            { name: "Classement", value: classement || "—" },
+          ],
+        }],
+      }),
+    });
+  } catch (e) {
+    console.error("Échec de l'envoi du webhook Discord :", e.message);
+  }
+}
+
 /* Construit le shell (sidebar + topbar) dans #shell, protège la page,
    et renvoie la session du membre connecté (ou redirige vers /index.html). */
 async function initShell(activePage, pageTitle) {
   const session = requireSession();
   if (!session) return null;
+
+  ensureActiveWeek().catch(e => console.error("ensureActiveWeek KO :", e));
 
   let allowed;
   try {
