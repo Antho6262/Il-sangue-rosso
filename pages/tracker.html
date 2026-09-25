@@ -316,6 +316,16 @@ function renderTable() {
     </tr>`).join("") : '<tr class="empty-row"><td colspan="8">Aucune action enregistrée</td></tr>';
 }
 
+async function ajusterArgent(sale, propre, description) {
+  const date = todayISO();
+  if (sale !== 0) {
+    await db.ref("argent/sale/" + uid()).set({ date, description, type: sale > 0 ? "Entrée" : "Sortie", montant: Math.abs(sale), responsable: SESSION.prenom, createdAt: Date.now() });
+  }
+  if (propre !== 0) {
+    await db.ref("argent/propre/" + uid()).set({ date, description, type: propre > 0 ? "Entrée" : "Sortie", montant: Math.abs(propre), responsable: SESSION.prenom, createdAt: Date.now() });
+  }
+}
+
 async function modifierAction(id) {
   const a = ALL_ACTIONS.find(x => x.id === id);
   if (!a) return;
@@ -386,6 +396,15 @@ async function modifierAction(id) {
   if (actionDef[0]) { update.action = actionDef[1].nom; update.action_id = actionDef[0]; }
   if (produitDrogueId) { update.produit_drogue = produitDrogue; update.produit_drogue_id = produitDrogueId; }
 
+  // Corrige le solde argent/sale et argent/propre pour refléter l'écart
+  // entre l'ancien et le nouveau montant (l'action seule ne suffit pas,
+  // c'est ce qui causait le décalage).
+  const ancienSale = a.resultat === "Réussite" ? Number(a.argent_sale || 0) : 0;
+  const ancienPropre = a.resultat === "Réussite" ? Number(a.argent_propre || 0) : 0;
+  const nouveauSale = nouveauResultat === "Réussite" ? (Number(sale) || 0) : 0;
+  const nouveauPropre = nouveauResultat === "Réussite" ? (Number(propre) || 0) : 0;
+  await ajusterArgent(nouveauSale - ancienSale, nouveauPropre - ancienPropre, "Correction (modif.) : " + (update.action || a.action));
+
   await db.ref("actions/" + (VIEW_WEEK || ACTIVE_WEEK).id + "/" + id).update(update);
   toast("Action modifiée, stock ajusté.");
   logAudit("Action modifiée", `${a.prenom_membre} — ${update.action || a.action}`);
@@ -397,6 +416,11 @@ async function supprimerAction(id) {
   if (!confirm("Supprimer cette action ? Le stock déjà déduit ne sera pas restauré automatiquement.")) return;
   const a = ALL_ACTIONS.find(x => x.id === id);
   await db.ref("actions/" + (VIEW_WEEK || ACTIVE_WEEK).id + "/" + id).remove();
+
+  if (a && a.resultat === "Réussite") {
+    await ajusterArgent(-Number(a.argent_sale || 0), -Number(a.argent_propre || 0), "Correction (suppr.) : " + a.action);
+  }
+
   toast("Action supprimée.");
   logAudit("Action supprimée", a ? `${a.prenom_membre} — ${a.action}` : id);
 }
