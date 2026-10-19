@@ -260,9 +260,67 @@ async function envoyerWebhookImage(webhook, blob, filename) {
   await fetch(webhook, { method: "POST", body: form });
 }
 
-/* getParisParts / ajouterJoursCivils / parisWallToUTC / fmtJJMM / nomAutoSemaine /
-   prochainesBornes / creerSemaineSuivante ont été déplacées dans js/app.js
-   (partagées avec ensureActiveWeek, qui tourne sur toutes les pages). */
+/* Dates ancrées Europe/Paris (identique à la logique du bot Discord). */
+function getParisParts(ts) {
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  });
+  const parts = fmt.formatToParts(new Date(ts));
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour") === 24 ? 0 : get("hour"), minute: get("minute"), second: get("second") };
+}
+function ajouterJoursCivils(y, m, d, jours) {
+  const anchor = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  anchor.setUTCDate(anchor.getUTCDate() + jours);
+  return { year: anchor.getUTCFullYear(), month: anchor.getUTCMonth() + 1, day: anchor.getUTCDate() };
+}
+function parisWallToUTC(y, m, d, h, mi, s) {
+  let guess = Date.UTC(y, m - 1, d, h, mi, s || 0);
+  for (let i = 0; i < 2; i++) {
+    const p = getParisParts(guess);
+    const guessAsIfLocal = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+    guess += Date.UTC(y, m - 1, d, h, mi, s || 0) - guessAsIfLocal;
+  }
+  return guess;
+}
+function fmtJJMM(ts) {
+  const p = getParisParts(ts);
+  return String(p.day).padStart(2, "0") + "/" + String(p.month).padStart(2, "0");
+}
+function nomAutoSemaine(debut, fin) { return "Semaine du " + fmtJJMM(debut) + " au " + fmtJJMM(fin); }
+function prochainesBornes(derniere) {
+  if (!derniere || !derniere.fin) {
+    // Pas de semaine précédente : ancre sur "maintenant" (dimanche 19h le plus récent).
+    const now = Date.now();
+    const p = getParisParts(now);
+    const wd = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", weekday: "short" }).format(new Date(now));
+    const weekday = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[wd];
+    let dimRef = ajouterJoursCivils(p.year, p.month, p.day, -weekday);
+    let debut = parisWallToUTC(dimRef.year, dimRef.month, dimRef.day, 19, 0, 0);
+    if (debut > now) { dimRef = ajouterJoursCivils(dimRef.year, dimRef.month, dimRef.day, -7); debut = parisWallToUTC(dimRef.year, dimRef.month, dimRef.day, 19, 0, 0); }
+    const dimSuivant = ajouterJoursCivils(dimRef.year, dimRef.month, dimRef.day, 7);
+    const fin = parisWallToUTC(dimSuivant.year, dimSuivant.month, dimSuivant.day, 19, 0, 0);
+    return { debut, fin, verrouAt: fin };
+  }
+  const debut = derniere.fin;
+  const p = getParisParts(debut);
+  const dimSuivant = ajouterJoursCivils(p.year, p.month, p.day, 7);
+  const fin = parisWallToUTC(dimSuivant.year, dimSuivant.month, dimSuivant.day, 19, 0, 0);
+  return { debut, fin, verrouAt: fin };
+}
+/* Ouvre la semaine suivante après un blocage manuel, avec protection anti-doublon
+   (même mécanisme d'index que le bot Discord). */
+async function creerSemaineSuivante(derniere) {
+  const bounds = prochainesBornes(derniere);
+  const idxRef = db.ref("semaine_index/" + bounds.debut);
+  const existe = await idxRef.once("value");
+  if (existe.exists()) { console.log("Semaine suivante déjà créée par ailleurs."); return; }
+  const id = uid();
+  const nom = nomAutoSemaine(bounds.debut, bounds.fin);
+  await idxRef.set(id);
+  await db.ref("semaines/" + id).set({ nom, bloquee: false, createdAt: Date.now(), debut: bounds.debut, fin: bounds.fin, verrouAt: bounds.verrouAt });
+}
 /* Stats/badges optionnels : best-effort, ne doit jamais faire planter le blocage de semaine. */
 async function majStatsEtBadges(weekId) {
   try {
@@ -800,8 +858,10 @@ async function tabActions(body) {
   body.innerHTML = `
     <div class="panel" style="border-color:rgba(212,175,55,.3);">
       <div class="panel-head"><h2>Import rapide — actions Il Sangue Rosso</h2></div>
-      <p class="small muted">Crée en un clic les actions Supérette, Go Fast, Fleeca, Armurerie et Labo avec leurs quotas par défaut
-      (Supérette 10, Go Fast 8, Fleeca 6, Armurerie 8, Labo 15 — modifiables ensuite dans Admin → Quotas / Actions).</p>
+      <p class="small muted">Crée en un clic les catégories Matériel et Drogue (Sporex, Venia, Weed, Cocaïne, Mexicana), puis les actions avec
+      déduction automatique du stock : ATM (1 Boîtier de piratage), Cambu (1 Outil de crochetage), Fleeca (1 Carte Fleeca + 1 Perceuse),
+      Armurerie (1 Pistolet artisanal), Vente de Drogue (retire la drogue choisie), Supérette, Go Fast et Labo — avec leurs quotas par défaut
+      (ATM 10, Supérette 10, Go Fast 8, Fleeca 6, Armurerie 8). Les stocks déjà existants ne sont pas touchés.</p>
       <button class="btn btn-gold mt8" onclick="importerActionsISR()">Importer les actions Il Sangue Rosso</button>
     </div>
 
@@ -924,12 +984,43 @@ async function creerAction() {
   loadTab("actions");
 }
 async function importerActionsISR() {
-  if (!confirm("Créer les actions Supérette (10), Go Fast (8), Fleeca (6), Armurerie (8) et Labo (15) avec leurs quotas par défaut ?")) return;
+  if (!confirm("Créer les catégories Matériel et Drogue, puis les actions ATM, Cambu, Supérette, Go Fast, Fleeca, Armurerie, Vente de Drogue et Labo avec déduction automatique du stock et quotas par défaut ?")) return;
+
+  // 1) Catégories + produits de stock (n'écrase jamais un produit déjà existant : son stock reste intact)
+  const stockSnap = await db.ref("stock").once("value");
+  const stockActuel = stockSnap.val() || {};
+  const nouveauxProduits = {
+    materiel_cat: { nom: "Matériel", emoji: "🛠️", produits: {
+      boitier: "Boîtier de piratage", crochetage: "Outil de crochetage",
+      carte_fleeca: "Carte Fleeca", perceuse: "Perceuse", pistolet_artisanal: "Pistolet artisanal"
+    }},
+    drogue_cat: { nom: "Drogue", emoji: "💊", produits: {
+      sporex: "Sporex", venia: "Venia", weed: "Weed", cocaine: "Cocaïne", mexicana: "Mexicana"
+    }}
+  };
+  const updates = {};
+  for (const [catId, cat] of Object.entries(nouveauxProduits)) {
+    const existante = stockActuel[catId];
+    if (!existante) { updates[`stock/${catId}/nom`] = cat.nom; updates[`stock/${catId}/emoji`] = cat.emoji; }
+    for (const [prodId, nom] of Object.entries(cat.produits)) {
+      const existe = existante && existante.produits && existante.produits[prodId];
+      if (!existe) updates[`stock/${catId}/produits/${prodId}`] = { nom, prix: 0, stock: 0, seuil: 0 };
+    }
+  }
+  if (Object.keys(updates).length) await db.ref().update(updates);
+
+  // 2) Actions avec recette (retrait automatique du stock à chaque saisie dans le Tracker)
   await db.ref("actions_dispo").update({
+    atm: { nom: "ATM", montant_sale: 0, montant_propre: 0, quota_defaut: 10,
+      recipe: [{ catId: "materiel_cat", prodId: "boitier", qty: 1 }] },
+    cambu: { nom: "Cambu", montant_sale: 0, montant_propre: 0, recipe: [{ catId: "materiel_cat", prodId: "crochetage", qty: 1 }] },
     superette: { nom: "Supérette", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 10 },
     gofast: { nom: "Go Fast", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 8 },
-    fleeca: { nom: "Fleeca", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 6 },
-    armurerie: { nom: "Armurerie", montant_sale: 0, montant_propre: 0, recipe: [], quota_defaut: 8 }
+    fleeca: { nom: "Fleeca", montant_sale: 0, montant_propre: 0, quota_defaut: 6,
+      recipe: [{ catId: "materiel_cat", prodId: "carte_fleeca", qty: 1 }, { catId: "materiel_cat", prodId: "perceuse", qty: 1 }] },
+    armurerie: { nom: "Armurerie", montant_sale: 0, montant_propre: 0, quota_defaut: 8,
+      recipe: [{ catId: "materiel_cat", prodId: "pistolet_artisanal", qty: 1 }] },
+    vente_drogue: { nom: "Vente de Drogue", montant_sale: 0, montant_propre: 0, recipe: [], cat_variable: "drogue_cat" }
   });
   // Labo : quota traité par catégorie (bootstrap automatique par pages/labo.html), on pré-crée juste la cible
   const snapActions = await db.ref("actions_dispo").once("value");
