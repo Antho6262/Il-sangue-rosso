@@ -244,24 +244,30 @@ async function ajouterAction() {
   }
   if (act.cat_variable) {
     const pid = document.getElementById("fProduitVar").value;
-    const prod = STOCK[act.cat_variable].produits[pid];
+    const prod = STOCK[act.cat_variable] && STOCK[act.cat_variable].produits && STOCK[act.cat_variable].produits[pid];
+    if (!prod) { toast("Produit introuvable dans la catégorie liée à cette action (Admin → Actions). Rien n'a été enregistré.", true); return; }
     entry.produit_drogue = prod.nom;
     entry.produit_drogue_id = pid;
   }
   await db.ref("actions/" + ACTIVE_WEEK.id + "/" + uid()).set(entry);
 
+  const erreurs = [];
+  const essayer = async (nom, fn) => { try { await fn(); } catch (e) { console.error(nom, e); erreurs.push(nom + " : " + (e && e.message ? e.message : e)); } };
   if (resultat === "Réussite") {
     if (act.cat_variable) {
       const pid = document.getElementById("fProduitVar").value;
-      await adjustStock(`stock/${act.cat_variable}/produits/${pid}/stock`, act.production ? qte : -qte);
-      await db.ref("journal_stock/" + uid()).set({ date: entry.date, membre: m.prenom, action: act.nom, quantite: qte, produit: entry.produit_drogue, createdAt: Date.now() });
+      await essayer("stock produit", async () => {
+        await adjustStock(`stock/${act.cat_variable}/produits/${pid}/stock`, act.production ? qte : -qte);
+        await db.ref("journal_stock/" + uid()).set({ date: entry.date, membre: m.prenom, action: act.nom, quantite: qte, produit: entry.produit_drogue, createdAt: Date.now() });
+      });
     }
-    await deduireStock(act, qte);
-    if (sale > 0) await db.ref("argent/sale/" + uid()).set({ date: entry.date, description: "Action : " + act.nom, type: "Entrée", montant: sale, responsable: m.prenom, createdAt: Date.now() });
-    if (propre > 0) await db.ref("argent/propre/" + uid()).set({ date: entry.date, description: "Action : " + act.nom, type: "Entrée", montant: propre, responsable: m.prenom, createdAt: Date.now() });
+    await essayer("déduction recette", () => deduireStock(act, qte));
+    if (sale > 0) await essayer("argent sale", () => db.ref("argent/sale/" + uid()).set({ date: entry.date, description: "Action : " + act.nom, type: "Entrée", montant: sale, responsable: m.prenom, createdAt: Date.now() }));
+    if (propre > 0) await essayer("argent propre", () => db.ref("argent/propre/" + uid()).set({ date: entry.date, description: "Action : " + act.nom, type: "Entrée", montant: propre, responsable: m.prenom, createdAt: Date.now() }));
   }
 
-  toast("Action enregistrée.");
+  if (erreurs.length) toast("Action enregistrée MAIS erreur → " + erreurs.join(" | "), true);
+  else toast("Action enregistrée.");
   logAudit("Action ajoutée", `${m.prenom} — ${act.nom} x${qte} (${resultat})`);
   if (resultat === "Réussite") verifierQuotaEtAlerter(membreId);
   await chargerListes();
