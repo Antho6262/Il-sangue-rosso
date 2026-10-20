@@ -140,3 +140,11 @@ function toast(msg, isErr) {
 function adjustStock(path, delta) {
   return db.ref(path).transaction(v => Math.max(0, (Number(v) || 0) + Number(delta)));
 }
+
+/* Journal d'audit (utilisé par le Tracker, etc.) — admin.html a sa propre version. */
+async function logAudit(action, details) {
+  try {
+    const s = (typeof getSession === "function" && getSession()) || {};
+    await db.ref("audit/" + uid()).set({ action, details: details || "", membre: s.prenom || "?", createdAt: Date.now() });
+  } catch (e) { console.error("logAudit KO", e); }
+}
