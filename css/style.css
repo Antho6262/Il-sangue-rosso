@@ -279,3 +279,50 @@ input:focus, select:focus, textarea:focus{border-color:var(--steel);}
 }
 
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+
+/* ---------- LOGO ANIMÉ (lions qui rugissent) ---------- */
+.alogo{
+  position:relative; width:100%; aspect-ratio:1248 / 832;
+  mix-blend-mode:screen; /* le noir du logo se fond dans la page */
+  cursor:pointer; user-select:none; -webkit-tap-highlight-color:transparent;
+}
+.alogo-glow{
+  position:absolute; inset:-8% -4%; pointer-events:none;
+  background:radial-gradient(ellipse at 50% 52%, rgba(201,162,74,.30), rgba(201,162,74,0) 62%);
+  animation:alogoGlow 4.2s ease-in-out infinite;
+}
+.alogo-inner{position:absolute; inset:0; transform-origin:50% 55%; will-change:transform, filter;}
+.alogo-img{position:absolute; inset:0; width:100%; height:100%; display:block; pointer-events:none;}
+.alogo-flame{
+  position:absolute; inset:0; background-size:100% 100%; background-repeat:no-repeat;
+  mix-blend-mode:screen; pointer-events:none; opacity:.2;
+  filter:blur(5px) saturate(1.7) brightness(1.1);
+  animation:alogoFlame 3.4s ease-in-out infinite;
+}
+.alogo-flame.b{
+  filter:blur(9px) saturate(2) hue-rotate(-10deg);
+  animation-duration:5.1s; animation-delay:-1.7s;
+}
+.alogo-svg{position:absolute; inset:0; width:100%; height:100%; overflow:hidden; pointer-events:none;}
+.alogo-embers{position:absolute; inset:0; width:100%; height:100%; pointer-events:none;}
+.alogo-static .alogo-glow, .alogo-static .alogo-flame{animation:none;}
+@keyframes alogoGlow{0%,100%{opacity:.55; transform:scale(1);} 50%{opacity:1; transform:scale(1.05);}}
+@keyframes alogoFlame{0%,100%{opacity:.1; transform:scale(1) rotate(-.4deg);} 50%{opacity:.42; transform:scale(1.03) rotate(.5deg);}}
+
+/* page de connexion : emblème animé (au-dessus de la carte, à côté sur grand écran) */
+body.login-body::before{
+  background:
+    radial-gradient(ellipse 60% 55% at 38% 45%, rgba(130,18,24,.22), rgba(130,18,24,0) 70%),
+    radial-gradient(ellipse 45% 45% at 50% 40%, rgba(201,162,74,.07), rgba(201,162,74,0) 70%),
+    #07080b;
+}
+.login-wrap{flex-direction:column;}
+.login-emblem{width:min(520px, 94vw); margin:0 auto -6px;}
+@media (min-width:1000px){
+  .login-wrap{flex-direction:row; gap:28px;}
+  .login-emblem{width:min(740px, 58vw); margin:0;}
+}
+
+/* menu de gauche */
+.sidebar-emblem{width:100%; max-width:210px; margin:0 auto 6px;}
+@media (max-width:680px){.sidebar-emblem{max-width:62px;}}

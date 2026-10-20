@@ -9,8 +9,8 @@
 <body class="login-body">
 
 <div class="login-wrap">
+  <div class="login-emblem" id="loginEmblem"></div>
   <div class="login-card fade-in">
-    <img src="img/logo.png" alt="Il Sangue Rosso" class="login-coin">
     <div class="login-brand">IL SANGUE ROSSO</div>
     <div class="login-sub">Famiglia · Onore · Lealtà</div>
     <div class="sigil-rule"></div>
@@ -39,6 +39,10 @@
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="js/firebase-config.js"></script>
+<script src="js/logo-anim.js"></script>
+<script>
+AnimatedLogo.mount(document.getElementById("loginEmblem"), { src: "img/logo.png", firstRoar: 1.2, roarEvery: [8, 13] });
+</script>
 <script>
 let MEMBRES = {};
 
