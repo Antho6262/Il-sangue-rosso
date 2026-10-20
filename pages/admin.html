@@ -1051,15 +1051,21 @@ function barreAdmin(pct) {
 }
 async function tabQuotas(body) {
   const week = await getActiveWeekAdmin();
-  const [snapM, snapAc, snapAcDispo, snapS, snapQC, snapG, snapQA] = await Promise.all([
+  const [snapM, snapAc, snapAcDispo, snapS, snapQC, snapG, snapQA, snapTx] = await Promise.all([
     db.ref("membres").once("value"),
     week ? db.ref("actions/" + week.id).once("value") : Promise.resolve({ val: () => null }),
     db.ref("actions_dispo").once("value"),
     db.ref("stock").once("value"),
     db.ref("quotas_categorie").once("value"),
     db.ref("visibilite_grades").once("value"),
-    db.ref("quotas_action").once("value")
+    db.ref("quotas_action").once("value"),
+    db.ref("transactions").once("value")
   ]);
+  // Ventes saisies via les pages Four / Transactions : comptées dans la semaine active (par date d'enregistrement)
+  const debutSemaine = week ? (week.createdAt || 0) : 0;
+  const finSemaine = week && week.closedAt ? week.closedAt : Infinity;
+  const ventesTx = entries(snapTx.val()).map(([id, t]) => t)
+    .filter(t => t.type === "vente" && (t.createdAt || 0) >= debutSemaine && (t.createdAt || 0) <= finSemaine);
   const visi = snapG.val() || {};
   const gradesMasques = new Set(Object.keys(visi).filter(g => visi[g] && visi[g].quotas === false));
   const membres = entries(snapM.val()).map(([id, m]) => ({ id, ...m })).filter(m => m.actif !== false && !gradesMasques.has(m.grade));
@@ -1131,8 +1137,11 @@ async function tabQuotas(body) {
       <table><thead><tr><th>Membre</th><th>Quota</th><th>Réalisé</th><th>Progression</th></tr></thead>
         <tbody>${membres.map(m => {
           const quota = Number((quotasCategorie[m.id] || {})[catId]) || 0;
-          const fait = actions.filter(a => a.membre_id === m.id && produitIds.has(a.produit_drogue_id) && a.resultat === "Réussite")
+          const faitActions = actions.filter(a => a.membre_id === m.id && produitIds.has(a.produit_drogue_id) && a.resultat === "Réussite")
             .reduce((acc, a) => acc + Number(a.quantite || 0), 0);
+          const faitVentes = ventesTx.filter(t => t.membre_id === m.id && produitIds.has(t.produit_id))
+            .reduce((acc, t) => acc + Number(t.quantite || 0), 0);
+          const fait = faitActions + faitVentes;
           const pct = quota > 0 ? Math.round(fait / quota * 100) : 0;
           return `<tr><td>${m.prenom}</td>
             <td><input type="number" value="${quota}" style="max-width:90px" onchange="majQuotaCategorieAdmin('${m.id}','${catId}', this.value)"></td>
