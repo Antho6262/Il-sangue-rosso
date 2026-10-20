@@ -76,3 +76,9 @@ Les ventes saisies sur les pages **Four** et **Transactions** s'écrivent dans l
 - Titres/stats en dégradé or, cartes/panneaux à cadre or→rouge avec reflet qui suit la souris (variables `--mx/--my`, géré dans `js/app.js`), coins ornés, séparateur `.sigil-rule` (losange rouge), boutons principaux rouge sang avec reflet, nav active barre rouge, drapeau italien (`.flag-rule`) sur la connexion.
 - `js/ambient.js` (nouveau) : braises rouges/dorées en fond, chargé par `index.html` et `js/app.js`. Respecte `prefers-reduced-motion`.
 - Logo : bords fondus par masque radial (`.alogo`) — ne pas mettre de `filter` sur un parent de `.alogo` (casse le `mix-blend-mode`).
+
+## LIAISONS DONNÉES (audit)
+- Tous les changements de stock passent par `adjustStock(path, delta)` (`js/firebase-config.js`, transaction atomique) : Tracker, Four, Transactions, Labo. Plus de perte quand 2 membres agissent en même temps.
+- Labo : la Récolte de branches est liée automatiquement au produit "Branche…" d'une autre catégorie si aucun lien n'est défini (Admin → Stock → lien de vente) ; sinon elle alimentait un compteur séparé dans `stock/labo_cat`.
+- Dashboard "Actions — semaine" et Quotas par catégorie comptent aussi les ventes (nœud `transactions`). Stats et Paye ne lisent que `actions`.
+- ⚠️ Si 2 catégories s'appellent "Drogue", Four prend la première trouvée : n'en garder qu'une.

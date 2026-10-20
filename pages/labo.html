@@ -23,6 +23,23 @@ let RAW = { membres: {}, stockLabo: {}, laboStock: {}, laboCommun: {}, visi: {},
 function renderTout() {
   MEMBRES = RAW.membres;
   LABO_PRODUITS = (RAW.stockLabo || {}).produits || {};
+  // Récolte de branches non liée au stock : on la relie automatiquement au produit "Branche…" d'une autre catégorie
+  (function autoLienBranches() {
+    let cible = null;
+    Object.entries(RAW.stockAll || {}).forEach(([cid, cat]) => {
+      if (cid === "labo_cat" || cible) return;
+      Object.entries((cat && cat.produits) || {}).forEach(([pid, p]) => {
+        if (!cible && /branche/i.test(p.nom || "")) cible = { cid, pid };
+      });
+    });
+    if (!cible) return;
+    const copie = {};
+    Object.entries(LABO_PRODUITS).forEach(([id, p]) => {
+      copie[id] = (!p.venteCatId && /r[ée]colte|branche/i.test(p.nom || ""))
+        ? { ...p, venteCatId: cible.cid, venteProdId: cible.pid } : p;
+    });
+    LABO_PRODUITS = copie;
+  })();
   LABO_STOCK = RAW.laboStock;
   LABO_STOCK_COMMUN = RAW.laboCommun;
   const visi = RAW.visi;
@@ -211,26 +228,17 @@ async function ajouterProduction() {
   if (resultat === "Réussite") {
     const recipe = prod.recipe || [];
     for (const ligne of recipe) {
-      const refIng = db.ref(`labo_stock_commun/${ligne.ingredientId}`);
-      const snapIng = await refIng.once("value");
-      const currentIng = Number(snapIng.val()) || 0;
-      await refIng.set(Math.max(0, currentIng - ligne.qty * qte));
+      await adjustStock(`labo_stock_commun/${ligne.ingredientId}`, -ligne.qty * qte);
     }
 
     // Si ce produit fini est lié à un produit vendable (ex: Vente de Drogue), on crédite CE stock-là
     // uniquement (un seul chiffre partagé, plus de double compteur qui finit par diverger).
     // Sans lien configuré, on garde l'ancien comportement (stock Labo interne).
     if (prod.venteCatId && prod.venteProdId) {
-      const refVente = db.ref(`stock/${prod.venteCatId}/produits/${prod.venteProdId}/stock`);
-      const snapVente = await refVente.once("value");
-      const currentVente = Number(snapVente.val()) || 0;
-      await refVente.set(currentVente + qte);
-      await db.ref(`stock/labo_cat/produits/${pid}/stock`).set(currentVente + qte);
+      const rV = await adjustStock(`stock/${prod.venteCatId}/produits/${prod.venteProdId}/stock`, qte);
+      await db.ref(`stock/labo_cat/produits/${pid}/stock`).set(Number(rV.snapshot.val()) || 0);
     } else {
-      const refCommun = db.ref(`stock/labo_cat/produits/${pid}/stock`);
-      const snapCommun = await refCommun.once("value");
-      const currentCommun = Number(snapCommun.val()) || 0;
-      await refCommun.set(currentCommun + qte);
+      await adjustStock(`stock/labo_cat/produits/${pid}/stock`, qte);
     }
   }
 
@@ -315,25 +323,15 @@ async function supprimerProduction(semaineId, id, membreId, pid, qte, resultat) 
   if (resultat === "Réussite") {
     const prod = LABO_PRODUITS[pid] || {};
     if (prod.venteCatId && prod.venteProdId) {
-      const refVente = db.ref(`stock/${prod.venteCatId}/produits/${prod.venteProdId}/stock`);
-      const snapVente = await refVente.once("value");
-      const currentVente = Number(snapVente.val()) || 0;
-      const nouveauVente = Math.max(0, currentVente - qte);
-      await refVente.set(nouveauVente);
-      await db.ref(`stock/labo_cat/produits/${pid}/stock`).set(nouveauVente);
+      const rV = await adjustStock(`stock/${prod.venteCatId}/produits/${prod.venteProdId}/stock`, -qte);
+      await db.ref(`stock/labo_cat/produits/${pid}/stock`).set(Number(rV.snapshot.val()) || 0);
     } else {
-      const refCommun = db.ref(`stock/labo_cat/produits/${pid}/stock`);
-      const snapCommun = await refCommun.once("value");
-      const currentCommun = Number(snapCommun.val()) || 0;
-      await refCommun.set(Math.max(0, currentCommun - qte));
+      await adjustStock(`stock/labo_cat/produits/${pid}/stock`, -qte);
     }
 
     const recipe = prod.recipe || [];
     for (const ligne of recipe) {
-      const refIng = db.ref(`labo_stock_commun/${ligne.ingredientId}`);
-      const snapIng = await refIng.once("value");
-      const currentIng = Number(snapIng.val()) || 0;
-      await refIng.set(currentIng + ligne.qty * qte);
+      await adjustStock(`labo_stock_commun/${ligne.ingredientId}`, ligne.qty * qte);
     }
   }
   await db.ref("actions/" + semaineId + "/" + id).remove();

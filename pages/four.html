@@ -218,10 +218,7 @@ async function ajouterTransaction() {
     date: document.getElementById("tDate").value || todayISO(), createdAt: Date.now()
   });
 
-  const stockRef = db.ref(`stock/${catId}/produits/${pid}/stock`);
-  const snap = await stockRef.once("value");
-  const current = Number(snap.val()) || 0;
-  await stockRef.set(Math.max(0, current - qte));
+  await adjustStock(`stock/${catId}/produits/${pid}/stock`, -qte);
 
   await db.ref(`argent/sale/${id}`).set({
     date: document.getElementById("tDate").value || todayISO(),
@@ -254,10 +251,7 @@ async function supprimerTransaction(id) {
   const snap = await db.ref("transactions/" + id).once("value");
   const t = snap.val();
   if (t) {
-    const stockRef = db.ref(`stock/${t.catId}/produits/${t.produit_id}/stock`);
-    const sSnap = await stockRef.once("value");
-    const current = Number(sSnap.val()) || 0;
-    await stockRef.set(current + t.quantite);
+    await adjustStock(`stock/${t.catId}/produits/${t.produit_id}/stock`, Number(t.quantite) || 0);
     await db.ref(`argent/sale/${id}`).remove();
   }
   await db.ref("transactions/" + id).remove();

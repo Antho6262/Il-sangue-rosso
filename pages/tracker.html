@@ -201,11 +201,7 @@ async function chargerListes() {
 async function deduireStock(actionDef, quantite) {
   if (!actionDef.recipe || !actionDef.recipe.length) return;
   for (const item of actionDef.recipe) {
-    const ref = db.ref(`stock/${item.catId}/produits/${item.prodId}/stock`);
-    const snap = await ref.once("value");
-    const current = Number(snap.val()) || 0;
-    const newStock = Math.max(0, current - Number(item.qty) * quantite);
-    await ref.set(newStock);
+    await adjustStock(`stock/${item.catId}/produits/${item.prodId}/stock`, -Number(item.qty) * quantite);
     await db.ref("journal_stock/" + uid()).set({
       date: todayISO(), membre: SESSION.prenom, action: actionDef.nom,
       quantite: Number(item.qty) * quantite,
@@ -257,11 +253,7 @@ async function ajouterAction() {
   if (resultat === "Réussite") {
     if (act.cat_variable) {
       const pid = document.getElementById("fProduitVar").value;
-      const ref = db.ref(`stock/${act.cat_variable}/produits/${pid}/stock`);
-      const snap = await ref.once("value");
-      const current = Number(snap.val()) || 0;
-      const next = act.production ? current + qte : Math.max(0, current - qte);
-      await ref.set(next);
+      await adjustStock(`stock/${act.cat_variable}/produits/${pid}/stock`, act.production ? qte : -qte);
       await db.ref("journal_stock/" + uid()).set({ date: entry.date, membre: m.prenom, action: act.nom, quantite: qte, produit: entry.produit_drogue, createdAt: Date.now() });
     }
     await deduireStock(act, qte);
@@ -316,16 +308,6 @@ function renderTable() {
     </tr>`).join("") : '<tr class="empty-row"><td colspan="8">Aucune action enregistrée</td></tr>';
 }
 
-async function ajusterArgent(sale, propre, description) {
-  const date = todayISO();
-  if (sale !== 0) {
-    await db.ref("argent/sale/" + uid()).set({ date, description, type: sale > 0 ? "Entrée" : "Sortie", montant: Math.abs(sale), responsable: SESSION.prenom, createdAt: Date.now() });
-  }
-  if (propre !== 0) {
-    await db.ref("argent/propre/" + uid()).set({ date, description, type: propre > 0 ? "Entrée" : "Sortie", montant: Math.abs(propre), responsable: SESSION.prenom, createdAt: Date.now() });
-  }
-}
-
 async function modifierAction(id) {
   const a = ALL_ACTIONS.find(x => x.id === id);
   if (!a) return;
@@ -359,16 +341,12 @@ async function modifierAction(id) {
   if (a.resultat === "Réussite") {
     const ancienDef = ACTIONS_DISPO[a.action_id];
     if (a.produit_drogue_id && ancienDef && ancienDef.cat_variable) {
-      const ref = db.ref(`stock/${ancienDef.cat_variable}/produits/${a.produit_drogue_id}/stock`);
-      const snap = await ref.once("value");
       const delta = ancienDef.production ? -Number(a.quantite || 0) : Number(a.quantite || 0);
-      await ref.set(Math.max(0, (Number(snap.val()) || 0) + delta));
+      await adjustStock(`stock/${ancienDef.cat_variable}/produits/${a.produit_drogue_id}/stock`, delta);
     }
     if (ancienDef && ancienDef.recipe && ancienDef.recipe.length) {
       for (const item of ancienDef.recipe) {
-        const ref = db.ref(`stock/${item.catId}/produits/${item.prodId}/stock`);
-        const snap = await ref.once("value");
-        await ref.set((Number(snap.val()) || 0) + Number(item.qty) * Number(a.quantite || 0));
+        await adjustStock(`stock/${item.catId}/produits/${item.prodId}/stock`, Number(item.qty) * Number(a.quantite || 0));
       }
     }
   }
@@ -376,10 +354,8 @@ async function modifierAction(id) {
   // application du stock pour la nouvelle version (si résultat Réussite)
   if (nouveauResultat === "Réussite" && actionDef[1]) {
     if (produitDrogueId && actionDef[1].cat_variable) {
-      const ref = db.ref(`stock/${actionDef[1].cat_variable}/produits/${produitDrogueId}/stock`);
-      const snap = await ref.once("value");
       const delta = actionDef[1].production ? nouvelleQte : -nouvelleQte;
-      await ref.set(Math.max(0, (Number(snap.val()) || 0) + delta));
+      await adjustStock(`stock/${actionDef[1].cat_variable}/produits/${produitDrogueId}/stock`, delta);
     }
     if (actionDef[1].recipe && actionDef[1].recipe.length) {
       await deduireStock(actionDef[1], nouvelleQte);
@@ -396,15 +372,6 @@ async function modifierAction(id) {
   if (actionDef[0]) { update.action = actionDef[1].nom; update.action_id = actionDef[0]; }
   if (produitDrogueId) { update.produit_drogue = produitDrogue; update.produit_drogue_id = produitDrogueId; }
 
-  // Corrige le solde argent/sale et argent/propre pour refléter l'écart
-  // entre l'ancien et le nouveau montant (l'action seule ne suffit pas,
-  // c'est ce qui causait le décalage).
-  const ancienSale = a.resultat === "Réussite" ? Number(a.argent_sale || 0) : 0;
-  const ancienPropre = a.resultat === "Réussite" ? Number(a.argent_propre || 0) : 0;
-  const nouveauSale = nouveauResultat === "Réussite" ? (Number(sale) || 0) : 0;
-  const nouveauPropre = nouveauResultat === "Réussite" ? (Number(propre) || 0) : 0;
-  await ajusterArgent(nouveauSale - ancienSale, nouveauPropre - ancienPropre, "Correction (modif.) : " + (update.action || a.action));
-
   await db.ref("actions/" + (VIEW_WEEK || ACTIVE_WEEK).id + "/" + id).update(update);
   toast("Action modifiée, stock ajusté.");
   logAudit("Action modifiée", `${a.prenom_membre} — ${update.action || a.action}`);
@@ -416,11 +383,6 @@ async function supprimerAction(id) {
   if (!confirm("Supprimer cette action ? Le stock déjà déduit ne sera pas restauré automatiquement.")) return;
   const a = ALL_ACTIONS.find(x => x.id === id);
   await db.ref("actions/" + (VIEW_WEEK || ACTIVE_WEEK).id + "/" + id).remove();
-
-  if (a && a.resultat === "Réussite") {
-    await ajusterArgent(-Number(a.argent_sale || 0), -Number(a.argent_propre || 0), "Correction (suppr.) : " + a.action);
-  }
-
   toast("Action supprimée.");
   logAudit("Action supprimée", a ? `${a.prenom_membre} — ${a.action}` : id);
 }

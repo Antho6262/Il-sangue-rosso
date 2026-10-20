@@ -134,3 +134,9 @@ function toast(msg, isErr) {
   wrap.appendChild(el);
   setTimeout(() => el.remove(), 3200);
 }
+
+
+/* Ajuste un stock de façon atomique (évite les pertes quand 2 membres agissent en même temps). */
+function adjustStock(path, delta) {
+  return db.ref(path).transaction(v => Math.max(0, (Number(v) || 0) + Number(delta)));
+}
