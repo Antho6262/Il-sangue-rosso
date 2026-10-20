@@ -1102,14 +1102,16 @@ async function tabQuotas(body) {
         <button class="btn btn-sm btn-gold" onclick="appliquerQuotasDefaut()">Appliquer les quotas par défaut</button>
       </div>
     ` + actionsFixes.map(a => {
-      const actionsMembreAll = actions.filter(ac => ac.action_id === a.id && ac.resultat === "Réussite");
+      const estVenteDrogue = /vente.*drogue/i.test(a.nom || "");
+      const actionsMembreAll = actions.filter(ac => ac.resultat === "Réussite" && (ac.action_id === a.id || (estVenteDrogue && /vente.*drogue/i.test(ac.action || ""))));
       return `<div class="panel">
         <div class="panel-head"><h2>🎯 Quota ${a.nom}${a.quota_defaut ? ` <span class="small muted">(défaut : ${a.quota_defaut})</span>` : ""}</h2></div>
         <table><thead><tr><th>Membre</th><th>Quota</th><th>Réalisé</th><th>Progression</th></tr></thead>
           <tbody>${membres.map(m => {
             const override = (RAW_QUOTAS_ACTION[m.id] || {})[a.id];
             const quota = override !== undefined ? Number(override) : Number(a.quota_defaut) || 0;
-            const fait = actionsMembreAll.filter(ac => ac.membre_id === m.id).reduce((acc, ac) => acc + Number(ac.quantite || 0), 0);
+            const fait = actionsMembreAll.filter(ac => ac.membre_id === m.id).reduce((acc, ac) => acc + Number(ac.quantite || 0), 0)
+              + (estVenteDrogue ? ventesTx.filter(t => t.membre_id === m.id).reduce((acc, t) => acc + Number(t.quantite || 0), 0) : 0);
             const pct = quota > 0 ? Math.round(fait / quota * 100) : 0;
             return `<tr><td>${m.prenom}</td>
               <td><input type="number" value="${quota}" style="max-width:90px" onchange="majQuotaActionAdmin('${m.id}','${a.id}', this.value)"></td>
