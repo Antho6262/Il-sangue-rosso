@@ -17,7 +17,7 @@
 <script>
 let SESSION;
 let ACTIVE_WEEK_ID = null, ACTIONS_REF = null;
-let DATA = { semaines: {}, argentSale: {}, argentPropre: {}, stock: {}, membres: {}, actions: {} };
+let DATA = { semaines: {}, argentSale: {}, argentPropre: {}, stock: {}, membres: {}, actions: {}, transactions: {} };
 let lastActionCount = null;
 
 function renderContent() {
@@ -120,9 +120,13 @@ function renderDerived() {
   lastActionCount = actions.length;
 
   const actionsClassiques = actions.filter(a => !a.produit_drogue_id);
-  const reussites = actionsClassiques.filter(a => a.resultat === "Réussite").length;
+  // ventes saisies via Four / Transactions pendant la semaine active : 1 vente = 1 action réussie
+  const sem = DATA.semaines[ACTIVE_WEEK_ID] || {};
+  const ventesSemaine = entries(DATA.transactions).map(([id, t]) => t).filter(t =>
+    String(t.type || "").toLowerCase() === "vente" && (t.createdAt || 0) >= (sem.createdAt || 0) && (t.createdAt || 0) <= (sem.closedAt || Infinity)).length;
+  const reussites = actionsClassiques.filter(a => a.resultat === "Réussite").length + ventesSemaine;
   const gains = actions.filter(a => a.produit_drogue_id).reduce((acc, a) => acc + Number(a.gains_totaux || 0), 0);
-  document.getElementById("nbActions").textContent = actionsClassiques.length;
+  document.getElementById("nbActions").textContent = actionsClassiques.length + ventesSemaine;
   document.getElementById("nbReussites").textContent = reussites + " réussites";
   document.getElementById("gainsTotaux").textContent = formatMoney(gains);
 
@@ -143,6 +147,7 @@ function renderDerived() {
   db.ref("argent/propre").on("value", snap => { DATA.argentPropre = snap.val() || {}; renderDerived(); });
   db.ref("stock").on("value", snap => { DATA.stock = snap.val() || {}; renderDerived(); });
   db.ref("membres").on("value", snap => { DATA.membres = snap.val() || {}; renderDerived(); });
+  db.ref("transactions").on("value", snap => { DATA.transactions = snap.val() || {}; renderDerived(); });
 
   db.ref("events_drogue").on("value", snap => {
     const now = Date.now();
