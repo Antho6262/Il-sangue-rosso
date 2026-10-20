@@ -70,3 +70,9 @@ Les ventes saisies sur les pages **Four** et **Transactions** s'écrivent dans l
 2. Toujours vérifier qu'un fichier/texte concerne bien Il Sangue Rosso et pas Volta ou un autre projet avant de le réutiliser.
 3. Le dossier `pages/armurerie.html`, `objectifs.html`, `sanctions.html` existent mais sont hors menu (comme sur Volta) — ne pas les réintégrer sans demande explicite. Le dossier `img/armes/` a été supprimé (armurerie.html a donc des images cassées si on y accède directement, sans impact car page inaccessible depuis le menu).
 4. **Livraison** : à partir de maintenant, envoyer uniquement le(s) fichier(s) modifié(s) à chaque changement (pas le zip complet), sauf demande contraire.
+
+## DA PREMIUM (noir chaud · or antique · rouge sang)
+- Tout est dans `css/style.css` : tokens `:root` (--gold-hi, --gold-lo, --gold-grad, --blood, --blood-glow, fonds noirs chauds) + section "DA PREMIUM" en fin de fichier (surcharge). Fond : fumée rouge animée (`body::before`), grain (`body::after`), plus d'image `background.png`.
+- Titres/stats en dégradé or, cartes/panneaux à cadre or→rouge avec reflet qui suit la souris (variables `--mx/--my`, géré dans `js/app.js`), coins ornés, séparateur `.sigil-rule` (losange rouge), boutons principaux rouge sang avec reflet, nav active barre rouge, drapeau italien (`.flag-rule`) sur la connexion.
+- `js/ambient.js` (nouveau) : braises rouges/dorées en fond, chargé par `index.html` et `js/app.js`. Respecte `prefers-reduced-motion`.
+- Logo : bords fondus par masque radial (`.alogo`) — ne pas mettre de `filter` sur un parent de `.alogo` (casse le `mix-blend-mode`).

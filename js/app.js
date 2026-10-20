@@ -104,7 +104,7 @@ async function initShell(activePage, pageTitle) {
       <div class="main">
         <div class="topbar">
           <div class="topbar-title">${pageTitle || ""}</div>
-          <div class="topbar-brand"><span class="coin">🪙</span> IL SANGUE ROSSO</div>
+          <div class="topbar-brand"><span class="gem"></span> IL SANGUE ROSSO</div>
         </div>
         <main class="content fade-in" id="content"></main>
       </div>
@@ -122,6 +122,24 @@ async function initShell(activePage, pageTitle) {
     s.src = root + "js/logo-anim.js";
     s.onload = go;
     document.head.appendChild(s);
+  })();
+
+  // Ambiance : braises en fond + reflet doré qui suit la souris sur les cartes
+  (function mountAmbience() {
+    if (!window.__isrAmbient) {
+      const a = document.createElement("script");
+      a.src = root + "js/ambient.js";
+      document.head.appendChild(a);
+    }
+    if (window.__isrSpot) return;
+    window.__isrSpot = true;
+    document.addEventListener("pointermove", e => {
+      const t = e.target.closest && e.target.closest(".card, .panel");
+      if (!t) return;
+      const r = t.getBoundingClientRect();
+      t.style.setProperty("--mx", (e.clientX - r.left) + "px");
+      t.style.setProperty("--my", (e.clientY - r.top) + "px");
+    }, { passive: true });
   })();
 
   // Indicateur temps réel : reflète l'état réel de la connexion Firebase
