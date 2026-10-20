@@ -1065,7 +1065,7 @@ async function tabQuotas(body) {
   const debutSemaine = week ? (week.createdAt || 0) : 0;
   const finSemaine = week && week.closedAt ? week.closedAt : Infinity;
   const ventesTx = entries(snapTx.val()).map(([id, t]) => t)
-    .filter(t => t.type === "vente" && (t.createdAt || 0) >= debutSemaine && (t.createdAt || 0) <= finSemaine);
+    .filter(t => String(t.type || "").toLowerCase() === "vente" && (t.createdAt || 0) >= debutSemaine && (t.createdAt || 0) <= finSemaine);
   const visi = snapG.val() || {};
   const gradesMasques = new Set(Object.keys(visi).filter(g => visi[g] && visi[g].quotas === false));
   const membres = entries(snapM.val()).map(([id, m]) => ({ id, ...m })).filter(m => m.actif !== false && !gradesMasques.has(m.grade));
@@ -1139,7 +1139,7 @@ async function tabQuotas(body) {
           const quota = Number((quotasCategorie[m.id] || {})[catId]) || 0;
           const faitActions = actions.filter(a => a.membre_id === m.id && produitIds.has(a.produit_drogue_id) && a.resultat === "Réussite")
             .reduce((acc, a) => acc + Number(a.quantite || 0), 0);
-          const faitVentes = ventesTx.filter(t => t.membre_id === m.id && produitIds.has(t.produit_id))
+          const faitVentes = ventesTx.filter(t => t.membre_id === m.id && (produitIds.has(t.produit_id) || t.catId === catId))
             .reduce((acc, t) => acc + Number(t.quantite || 0), 0);
           const fait = faitActions + faitVentes;
           const pct = quota > 0 ? Math.round(fait / quota * 100) : 0;

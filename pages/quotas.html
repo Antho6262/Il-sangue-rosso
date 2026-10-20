@@ -92,7 +92,7 @@ function renderDerived() {
   const debutSemaine = semaineActive.createdAt || 0;
   const finSemaine = semaineActive.closedAt || Infinity;
   const ventesTx = entries(DATA.transactions).map(([id, t]) => t)
-    .filter(t => t.type === "vente" && (t.createdAt || 0) >= debutSemaine && (t.createdAt || 0) <= finSemaine);
+    .filter(t => String(t.type || "").toLowerCase() === "vente" && (t.createdAt || 0) >= debutSemaine && (t.createdAt || 0) <= finSemaine);
 
   const wrapAction = document.getElementById("quotasActionWrap");
   const actionsFixes = entries(DATA.actionsDispo).map(([id, a]) => ({ id, ...a })).filter(a => !a.cat_variable);
@@ -131,7 +131,7 @@ function renderDerived() {
             const quota = Number((DATA.quotasCategorie[m.id] || {})[catId]) || 0;
             const actionsMembre = actions.filter(a => a.membre_id === m.id && produitIds.has(a.produit_drogue_id) && a.resultat === "Réussite");
             // Ventes saisies via les pages Four / Transactions, comptées dans la semaine active
-            const ventesMembre = ventesTx.filter(t => t.membre_id === m.id && produitIds.has(t.produit_id));
+            const ventesMembre = ventesTx.filter(t => t.membre_id === m.id && (produitIds.has(t.produit_id) || t.catId === catId));
             // Labo : chaque production compte pour 1, quelle que soit la quantité fabriquée
             // (une "fournée" de 150 SporX = 1, pas 150). Les autres catégories comptent la quantité.
             const fait = isLabo ? actionsMembre.length
